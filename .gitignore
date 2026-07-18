@@ -1,0 +1,13 @@
+.DS_Store
+*.zip
+*.crx
+*.pem
+
+# Sider reference implementation files; not part of SideMind.
+artifacts/
+
+# Local extension build output and temporary files.
+dist/
+build/
+*.log
+*.tmp

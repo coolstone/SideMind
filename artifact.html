@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SideMind 工件</title>
+    <link rel="stylesheet" href="artifact.css" />
+  </head>
+  <body>
+    <main class="artifact-app">
+      <header class="artifact-header">
+        <div class="artifact-identity">
+          <img class="artifact-logo" src="assets/logo.svg" alt="SideMind" />
+          <div><small>SIDEMIND ARTIFACT</small><h1 id="artifactTitle">正在载入工件…</h1></div>
+        </div>
+        <div class="artifact-actions">
+          <button id="refreshButton" type="button" title="重新预览">↻</button>
+          <select id="viewMode" aria-label="查看方式">
+            <option value="split">代码与预览</option>
+            <option value="code">仅代码</option>
+            <option value="preview">仅预览</option>
+          </select>
+          <button id="copyButton" type="button">复制</button>
+          <button id="downloadButton" type="button">下载</button>
+          <button id="closeButton" class="close-button" type="button" aria-label="关闭">×</button>
+        </div>
+      </header>
+
+      <section class="security-note">
+        <span>本地工件</span>
+        <p>内容保存在浏览器本地；预览位于隔离沙箱中，脚本和外部网络请求默认禁用。</p>
+      </section>
+
+      <section class="artifact-workspace" id="artifactWorkspace" data-mode="split">
+        <article class="code-pane">
+          <header><strong id="codeLabel">代码</strong><small>编辑后自动保存到本地</small></header>
+          <textarea id="codeEditor" spellcheck="false" aria-label="工件代码"></textarea>
+        </article>
+        <article class="preview-pane">
+          <header><strong>预览</strong><small id="previewStatus">安全沙箱</small></header>
+          <iframe id="previewFrame" sandbox="" title="工件预览"></iframe>
+          <div class="preview-empty" id="previewEmpty" hidden>
+            <strong>此类型暂不渲染运行效果</strong>
+            <span>仍可在代码视图中编辑、复制或下载文件。</span>
+          </div>
+        </article>
+      </section>
+      <div class="load-error" id="loadError" hidden></div>
+      <div class="toast" id="artifactToast" hidden></div>
+    </main>
+    <script src="artifact.js"></script>
+  </body>
+</html>

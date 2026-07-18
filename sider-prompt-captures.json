@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Summarize",
+    "content": "You are a highly skilled AI trained in language comprehension and summarization. I would like you to read the text delimited by triple quotes and summarize it into a concise abstract paragraph. Aim to retain the most important points, providing a coherent and readable summary that could help a person understand the main points of the discussion without needing to read the entire text. Please avoid unnecessary details or tangential points.\nOnly give me the output and nothing else. Do not wrap responses in quotes. Respond in the ${lang} language.\n\"\"\"\n${input}\n\"\"\""
+  },
+  {
+    "name": "Explain",
+    "content": "Please explain clearly and concisely in ${lang} : \"\"\"${input}\"\"\""
+  },
+  {
+    "name": "Translate",
+    "content": "Rewrite the text in triple quotes in ${lang}.\n\"\"\"\n${input}\n\"\"\"\n\nOnly give me the translation and nothing else. Do not wrap responses in quotes."
+  },
+  {
+    "name": "翻译单词",
+    "content": "You are a highly skilled AI trained in language translation. I would like you to translate the text delimited by triple quotes into ${lang} language, ensuring that the translation is colloquial and authentic.\nIf there's only one word, provide the English phonetic transcription and the corresponding definition from an English dictionary.\nOnly give me the output and nothing else. Do not wrap responses in quotes. \n\"\"\"\n${input}\n\"\"\""
+  },
+  {
+    "name": "公众号文章",
+    "content": "You are a highly skilled AI trained in English comprehension, translation, and blog writing. Please help me generate a blog post based on the following Contents. \nFollow the steps below: \nStep 1: Generate a catchy blog title for me; \nStep 2: Generate blog content based on the following material, with appropriate modifications and adjustments within a 10% range, Keep the original tables and images  of the web page;\nStep 3: Organize the content according to the original sections, output in html format; an example likes:\n<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>文章</title><style>.m{--a:#27408b;--c:#e2e6f4;--d:#2b4265;--e:#e9ecf6;--f:#f6f8fb}.t{--a:#ff4c00;--c:#fff0e6;--d:#c94600;--e:#fff2e7;--f:#fff7f2}#nice{padding:30px;font-family:ptima-Regular;word-break:break-all;background:var(--f,#fff)}#nice p{margin:5px 0;line-height:26px;word-spacing:3px;letter-spacing:3px;text-align:left;font-size:16px;text-indent:2em;color:var(--d)}#nice h1,#nice h2{text-align:center}#nice h1{margin-bottom:20px;border-top:2px solid var(--a);font-size:26px}#nice h2{margin:25px 0 15px;border-bottom:2px solid var(--a);font-size:22px}#nice h1 .content,#nice h2 .content{display:inline-block;padding:3px 10px 1px;color:#fff;background:var(--a)}#nice h1 .content{font-weight:400;border-radius:0 0 13px 13px}#nice h2 .content{font-weight:700;border-radius:3px 3px 0 0;margin-right:3px}#nice h3{margin:20px 0 10px;font-size:18px;font-weight:700;color:var(--d)}#nice h3 .content{display:inline-block;padding:2px 12px;border-left:4px solid var(--a);background:var(--c);color:var(--a);border-radius:0 5px 5px 0;font-size:1em;letter-spacing:1px}#nice blockquote{border-left:3px solid var(--a);background:var(--e);padding:10px 15px;margin:15px 0;color:var(--d)}</style></head><body><div id=\"nice\" class=\"m\">[文章内容]</div></body></html>\nDo not include step information. \n输出可直接预览的HTML格式代码。\nRespond in the ${lang} language. \nContents: \"\"\"${input}\"\"\""
+  },
+  {
+    "name": "行业分析-3商业架构与生态",
+    "content": "CONTEXT\nWrapping up a deep dive. Help me master the business logic, KPIs, and external environment.\n\nSTATUS\nPrevious parts covered structure, segments, customers, processes. Do not repeat.\n\nGOAL (BLOCK 3 of 3)\nExplain business architecture and ecosystem.\n\nCOVER\n1. Dominant business models\n2. Emerging/disruptive models\n3. KPIs that matter and what \"excellence\" looks like\n4. Ecosystem enablers (tools, platforms, certifications, logistics…)\n5. Norms/regulations shaping operations and GTM\n\nBEST PRACTICES\n- Be specific and concrete\n- Focus on practitioner needs\n- Provide benchmarks/ranges where possible\n- Format for scanning and reuse"
+  },
+  {
+    "name": "行业分析-2客户与运营",
+    "content": "CONTEXT\nContinuing an in-depth industry analysis. No financials. Focus on field operations and power dynamics.\n\nSTATUS\nMarket structure, value chain, players, trends are already covered. Do not repeat.\n\nGOAL (BLOCK 2 of 3)\nExplain the industry at the customer and operational level.\n\nCOVER\n1. Final customers: goals, expectations, frustrations\n2. Discovery, evaluation, selection\n3. Channels and purchase drivers\n4. Negotiating power: who and why\n5. Critical dependencies or bottlenecks\n6. Core operational processes and non-obvious practices\n\nBEST PRACTICES\n- Think from the field\n- Avoid generalities; use bullets and concrete examples"
+  },
+  {
+    "name": "行业分析-1市场地图",
+    "content": "You are a senior sector analyst.\n\nYour task is to help me fully understand how an industry works — not from a financial perspective, but from a strategic, structural, and operational lens.\n\n GOAL (BLOCK 1 of 3)\n\nIn this first phase, focus on the **macro-structure** and **deep dynamics** of the following industry: [INSERT INDUSTRY NAME].\n\n COVER THESE POINTS\n\n1. What is the current market size, and how is it expected to evolve (CAGR, 5–10 years)?\n2. What are the main industry segments (by use case, tech, client type, etc.)?\n3. Who are the typical players at each layer of the value chain?\n4. Describe the full value chain from raw input to end user\n5. What are the dominant long-term trends shaping the industry?\n6. What are the historical disruptions or milestones that changed the landscape?\n\n BEST PRACTICES\n\n- Reflect deeply before writing\n- Prioritize clarity, precision, and real-world applicability\n- Use bullet points and headers\n- If data is missing, suggest proxies or approximations"
+  }
+]

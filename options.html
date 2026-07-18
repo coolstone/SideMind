@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SideMind 设置</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="settings-shell">
+      <header class="settings-header">
+        <img class="brand-mark" src="assets/logo.svg" alt="SideMind" />
+        <div>
+          <p class="eyebrow">SIDEMIND AI</p>
+          <h1>连接你的模型</h1>
+          <p>配置仅保存在本机浏览器中，不会写入项目文件。</p>
+        </div>
+      </header>
+
+      <form id="settingsForm">
+        <section class="settings-card">
+          <div class="section-heading">
+            <span class="step">01</span>
+            <div><h2>默认连接模式</h2><p>可随时在侧边栏底部快速切换。</p></div>
+          </div>
+
+          <label>
+            <span>连接方式</span>
+            <select id="connectionMode" name="connectionMode">
+              <option value="api">API Key · 回答直接返回 SideMind</option>
+              <option value="chatgpt_web">ChatGPT 网页交接 · 使用已登录订阅</option>
+            </select>
+            <small id="connectionModeHint">直接请求你配置的模型服务，适合连续对话和自动处理。</small>
+          </label>
+
+          <label>
+            <span>响应语言</span>
+            <select id="responseLanguage" name="responseLanguage">
+              <option value="简体中文">简体中文</option>
+              <option value="繁體中文">繁體中文</option>
+              <option value="English">English</option>
+              <option value="日本語">日本語</option>
+              <option value="한국어">한국어</option>
+              <option value="Español">Español</option>
+              <option value="Français">Français</option>
+              <option value="Deutsch">Deutsch</option>
+            </select>
+            <small>普通聊天会优先使用此语言；提示词中的 <code>${lang}</code> 也会自动替换为该值。</small>
+          </label>
+        </section>
+
+        <section class="settings-card api-only">
+          <div class="section-heading">
+            <span class="step">02</span>
+            <div><h2>服务商与接口</h2><p>默认使用 OpenAI Responses API，也支持兼容 Chat Completions 的服务。</p></div>
+          </div>
+
+          <div class="form-grid profile-grid">
+            <label>
+              <span>模型配置</span>
+              <select id="profileSelect" name="profileSelect"></select>
+            </label>
+            <label>
+              <span>配置名称</span>
+              <input id="profileName" name="profileName" maxlength="40" placeholder="例如：DeepSeek 日常" required />
+            </label>
+            <div class="profile-actions">
+              <button id="newProfileButton" type="button">＋ 新建</button>
+              <button id="deleteProfileButton" type="button">删除</button>
+            </div>
+          </div>
+
+          <div class="form-grid two-columns">
+            <label>
+              <span>服务商</span>
+              <select id="provider" name="provider">
+                <option value="openai">OpenAI</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="compatible">自定义 OpenAI 兼容服务</option>
+              </select>
+            </label>
+            <label>
+              <span>API 类型</span>
+              <select id="apiMode" name="apiMode">
+                <option value="responses">Responses API</option>
+                <option value="chat">Chat Completions</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            <span>Base URL</span>
+            <input id="baseUrl" name="baseUrl" type="url" spellcheck="false" placeholder="https://api.openai.com/v1" required />
+            <small>填写到 <code>/v1</code> 即可；若填完整端点也能识别。</small>
+          </label>
+        </section>
+
+        <section class="settings-card api-only">
+          <div class="section-heading">
+            <span class="step">03</span>
+            <div><h2>凭据与模型</h2><p>选择模型，并填写你自己的 API Key。</p></div>
+          </div>
+
+          <label>
+            <span>API Key</span>
+            <div class="password-field">
+              <input id="apiKey" name="apiKey" type="password" autocomplete="off" placeholder="sk-…" required />
+              <button id="toggleKeyButton" type="button">显示</button>
+            </div>
+          </label>
+
+          <div class="form-grid two-columns">
+            <label>
+              <span>模型 ID</span>
+              <input id="model" name="model" list="modelSuggestions" spellcheck="false" placeholder="gpt-5.6-terra" required />
+              <datalist id="modelSuggestions">
+                <option value="gpt-5.6-terra"></option>
+                <option value="gpt-5.6-sol"></option>
+                <option value="gpt-5.6-luna"></option>
+                <option value="gpt-5.5"></option>
+                <option value="gpt-5.4-mini"></option>
+                <option value="deepseek-v4-flash"></option>
+                <option value="deepseek-v4-pro"></option>
+                <option value="~openai/gpt-latest"></option>
+              </datalist>
+            </label>
+            <label>
+              <span>最大输出 Token</span>
+              <input id="maxOutputTokens" name="maxOutputTokens" type="number" min="256" max="128000" step="1" value="1800" required />
+              <small id="tokenHint">上限取决于所选模型；日常网页总结建议使用 4,000—16,000。</small>
+            </label>
+          </div>
+        </section>
+
+        <section class="security-note" id="securityNote">
+          <span>盾</span>
+          <div><strong id="securityTitle">独立开发版的安全边界</strong><p id="securityDescription">API Key 保存在 <code>chrome.storage.local</code>，并限制为扩展受信任页面可读。个人本机使用足够方便；若要发布给用户，请增加服务端代理、用户鉴权、配额与审计。</p></div>
+        </section>
+
+        <div class="form-actions">
+          <p id="statusText" aria-live="polite"></p>
+          <button class="secondary-button api-only" id="testButton" type="button">保存并测试连接</button>
+          <button class="primary-button" type="submit">保存设置</button>
+        </div>
+      </form>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

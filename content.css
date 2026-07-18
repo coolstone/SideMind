@@ -1,0 +1,111 @@
+#sidemind-selection-toolbar {
+  all: initial;
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: #171923;
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.28);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+#sidemind-selection-toolbar[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+#sidemind-selection-toolbar button {
+  all: unset;
+  box-sizing: border-box;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: #d9dbe8;
+  cursor: pointer;
+  font: 600 12px/30px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#sidemind-selection-toolbar button:first-child {
+  color: #fff;
+  background: linear-gradient(135deg, #7c5cff, #5c7cff);
+}
+
+#sidemind-selection-toolbar button:hover {
+  background-color: #2b2e3b;
+  color: #fff;
+}
+
+#sidemind-selection-toolbar button:first-child:hover {
+  background: linear-gradient(135deg, #8c70ff, #6f8cff);
+}
+
+html.sidemind-focus-mode body > *:not(main):not(article),
+html.sidemind-focus-mode nav,
+html.sidemind-focus-mode aside,
+html.sidemind-focus-mode footer {
+  opacity: 0.1 !important;
+  transition: opacity 180ms ease !important;
+}
+
+html.sidemind-focus-mode main,
+html.sidemind-focus-mode article {
+  position: relative !important;
+  z-index: 2147483000 !important;
+  opacity: 1 !important;
+}
+
+#sidemind-chatgpt-sync {
+  all: unset;
+  position: fixed;
+  z-index: 2147483646;
+  right: 18px;
+  bottom: 88px;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #7c5cff, #5c7cff);
+  box-shadow: 0 12px 30px rgba(46, 35, 105, 0.28);
+  color: #fff;
+  cursor: pointer;
+  font: 650 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#sidemind-chatgpt-sync:hover { filter: brightness(1.08); }
+#sidemind-chatgpt-sync:disabled { cursor: wait; opacity: 0.58; }
+
+#sidemind-chatgpt-notice {
+  all: initial;
+  position: fixed;
+  z-index: 2147483647;
+  top: 18px;
+  left: 50%;
+  max-width: min(520px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 10px 14px;
+  transform: translate(-50%, -8px);
+  border-radius: 11px;
+  background: #25222c;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+  color: #fff;
+  font: 600 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+#sidemind-chatgpt-notice[data-error="true"] { background: #9b3440; }
+#sidemind-chatgpt-notice[data-visible="true"] { opacity: 1; transform: translate(-50%, 0); }

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SideMind 提示词</title>
+    <link rel="stylesheet" href="prompts.css" />
+  </head>
+  <body>
+    <main class="prompt-shell">
+      <header class="prompt-header">
+        <div class="brand"><img src="assets/logo.svg" alt="SideMind" /><div><p>SIDEMIND</p><h1>提示词管理</h1></div></div>
+        <div class="header-actions">
+          <input id="searchInput" type="search" placeholder="搜索提示词" />
+          <button id="newPromptButton" class="primary" type="button">＋ 新建提示词</button>
+        </div>
+      </header>
+
+      <nav class="category-tabs" id="categoryTabs">
+        <button class="is-active" type="button" data-category="all">全部</button>
+        <button type="button" data-category="chat">聊天/提问</button>
+        <button type="button" data-category="reading">阅读</button>
+        <button type="button" data-category="writing">写作</button>
+      </nav>
+      <p class="sort-hint">拖动卡片左侧手柄调整顺序，也可使用上下箭头；排序会同步到侧栏快捷提示词和完整列表。</p>
+
+      <section class="prompt-board">
+        <article class="prompt-column">
+          <div class="column-title"><div><span>显</span><strong>在侧栏显示</strong></div><small id="visibleCount">0</small></div>
+          <div class="prompt-list" id="visibleList"></div>
+        </article>
+        <article class="prompt-column muted-column">
+          <div class="column-title"><div><span>隐</span><strong>已隐藏</strong></div><small id="hiddenCount">0</small></div>
+          <div class="prompt-list" id="hiddenList"></div>
+        </article>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="modalBackdrop" hidden></div>
+    <dialog id="promptDialog">
+      <form id="promptForm" method="dialog">
+        <header><div><p>SIDEMIND PROMPT</p><h2 id="dialogTitle">新建提示词</h2></div><button id="closeDialogButton" type="button">×</button></header>
+        <input id="promptId" type="hidden" />
+        <label><span>提示名称</span><input id="promptName" maxlength="40" required placeholder="例如：行业分析" /></label>
+        <label><span>提示内容</span><textarea id="promptContent" rows="12" maxlength="8000" required placeholder="描述模型需要完成的任务、输出结构和约束…"></textarea></label>
+        <div class="form-grid">
+          <label><span>适用于</span><select id="promptCategory"><option value="chat">聊天/提问</option><option value="reading">阅读</option><option value="writing">写作</option></select></label>
+          <label class="toggle-label"><span>在侧栏列表显示</span><input id="promptVisible" type="checkbox" checked /></label>
+        </div>
+        <footer><button id="cancelButton" type="button">取消</button><button class="primary" type="submit">保存</button></footer>
+      </form>
+    </dialog>
+    <div class="toast" id="toast" hidden></div>
+    <script src="template-variables.js"></script>
+    <script src="prompt-library.js"></script>
+    <script src="prompts.js"></script>
+  </body>
+</html>

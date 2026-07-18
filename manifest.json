@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "SideMind AI",
+  "short_name": "SideMind",
+  "version": "0.5.4",
+  "minimum_chrome_version": "116",
+  "description": "A context-aware AI copilot that lives beside every webpage.",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "assets/logo-16.png",
+    "32": "assets/logo-32.png",
+    "48": "assets/logo-48.png",
+    "128": "assets/logo-128.png"
+  },
+  "action": {
+    "default_title": "打开 SideMind AI",
+    "default_icon": {
+      "16": "assets/logo-16.png",
+      "32": "assets/logo-32.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "summarize-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "总结当前网页"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
