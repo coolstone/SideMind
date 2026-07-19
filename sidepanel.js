@@ -41,9 +41,17 @@ const DEFAULT_UI_SETTINGS = {
   model: "gpt-5.6-terra",
   apiKey: "",
   responseLanguage: "简体中文",
+  startupBehavior: "restore_last",
   activeProfileId: "default",
-  modelProfiles: []
+  modelProfiles: [],
+  modelProfileLibraryVersion: 0
 };
+
+const MODEL_PROFILE_LIBRARY_VERSION = 1;
+const BUILT_IN_MODEL_PROFILES = [
+  { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000 },
+  { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 }
+];
 
 const DEFAULT_SPACE = { id: "space-default", name: "默认空间", createdAt: 0 };
 const MAX_ATTACHMENT_COUNT = 6;
@@ -74,6 +82,9 @@ const state = {
   toastTimer: null,
   historySearchTimer: null,
   historyRenderToken: 0,
+  lastConversationId: null,
+  controlTooltipTimer: null,
+  controlTooltipTarget: null,
   speakingMessageId: null,
   speechUtterance: null,
   templateVariableResolver: null,
@@ -83,14 +94,14 @@ const state = {
 const ui = Object.fromEntries([
   "newChatButton", "newChatActionButton", "historyButton", "settingsButton", "promptLibraryButton", "spaceButton", "spaceName", "pageTitle", "siteDot",
   "contextToggle", "refreshContextButton", "welcomeState", "chatState",
-  "messageList", "thinkingRow", "actionGrid", "quickActions", "promptOverflowButton", "focusModeButton",
+  "messageList", "thinkingRow", "actionGrid", "quickActions", "promptOverflowButton",
   "importChatGPTButton", "attachmentList", "fileInput", "fileUploadButton", "composerForm",
   "promptInput", "captureButton", "readPageButton", "connectionModeSelect", "modelButton", "modelName", "reasoningButton", "sendButton", "privacyNote", "historyDrawer",
-  "historyList", "historyCount", "historySearchInput", "closeHistoryButton", "clearHistoryButton", "drawerBackdrop", "toast",
+  "historyList", "historyCount", "historySearchInput", "closeHistoryButton", "importHistoryButton", "importHistoryInput", "exportHistoryButton", "clearHistoryButton", "drawerBackdrop", "toast",
   "modelPopover", "modelProfileList", "manageModelsButton", "promptPopover", "promptSearchInput", "promptList", "managePromptsButton",
   "spacePopover", "spaceList", "newSpaceButton", "contentArea",
   "templateVariableDialog", "templateVariableForm", "templateVariableTitle", "templateVariableSummary", "templateVariableFields", "closeTemplateVariableButton", "cancelTemplateVariableButton",
-  "selectionPreview", "selectionPreviewText", "clearSelectionButton"
+  "selectionPreview", "selectionPreviewText", "clearSelectionButton", "controlTooltip"
 ].map((id) => [id, document.getElementById(id)]));
 
 init();
@@ -98,6 +109,7 @@ init();
 async function init() {
   bindEvents();
   await Promise.all([loadSettings(), loadActiveTabContext(), loadLibraryData()]);
+  await applyStartupBehavior();
   await consumePendingTask();
   await consumeImportedChatGPTResponse();
   updateComposerState();
@@ -113,6 +125,9 @@ function bindEvents() {
   ui.historyButton.addEventListener("click", openHistory);
   ui.closeHistoryButton.addEventListener("click", closeHistory);
   ui.drawerBackdrop.addEventListener("click", closeHistory);
+  ui.importHistoryButton.addEventListener("click", () => ui.importHistoryInput.click());
+  ui.importHistoryInput.addEventListener("change", importHistoryFile);
+  ui.exportHistoryButton.addEventListener("click", exportCurrentSpaceHistory);
   ui.clearHistoryButton.addEventListener("click", clearHistory);
   ui.historySearchInput.addEventListener("input", () => {
     clearTimeout(state.historySearchTimer);
@@ -128,7 +143,6 @@ function bindEvents() {
   ui.readPageButton.addEventListener("click", attachCurrentPage);
   ui.modelButton.addEventListener("click", () => togglePopover("model"));
   ui.reasoningButton.addEventListener("click", cycleReasoningMode);
-  ui.focusModeButton.addEventListener("click", toggleFocusMode);
   ui.importChatGPTButton.addEventListener("click", syncLatestChatGPTResponse);
   ui.connectionModeSelect.addEventListener("change", changeConnectionMode);
   ui.manageModelsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
@@ -140,6 +154,7 @@ function bindEvents() {
   ui.templateVariableDialog.addEventListener("cancel", (event) => { event.preventDefault(); cancelTemplateVariables(); });
   ui.promptSearchInput.addEventListener("input", renderPromptList);
   document.addEventListener("click", handleGlobalClick);
+  bindControlTooltips();
   document.querySelectorAll("[data-close-popover]").forEach((button) => button.addEventListener("click", closePopovers));
 
   ui.actionGrid.addEventListener("click", (event) => {
@@ -160,6 +175,9 @@ function bindEvents() {
   ui.promptInput.addEventListener("input", () => {
     autoResizeTextarea();
     updateComposerState();
+  });
+  ui.promptInput.addEventListener("paste", (event) => {
+    handleComposerPaste(event).catch((error) => showToast(error.message || "剪贴板图片读取失败"));
   });
   ui.promptInput.addEventListener("keydown", (event) => {
     if (event.key === "/" && !ui.promptInput.value) {
@@ -207,7 +225,9 @@ async function loadSettings() {
   const { settings = {} } = await chrome.storage.local.get("settings");
   const migrated = ensureModelProfiles({ ...DEFAULT_UI_SETTINGS, ...settings });
   state.settings = migrated;
-  if (!settings.modelProfiles?.length) await chrome.storage.local.set({ settings: migrated });
+  if (!settings.modelProfiles?.length || Number(settings.modelProfileLibraryVersion || 0) < MODEL_PROFILE_LIBRARY_VERSION) {
+    await chrome.storage.local.set({ settings: migrated });
+  }
   updateModeUI();
 }
 
@@ -222,6 +242,7 @@ async function loadLibraryData() {
   state.currentSpaceId = state.spaces.some((space) => space.id === preferredSpace) ? preferredSpace : state.spaces[0].id;
   state.reasoningEffort = ["none", "high", "max"].includes(data.uiPreferences?.reasoningEffort)
     ? data.uiPreferences.reasoningEffort : "none";
+  state.lastConversationId = data.uiPreferences?.lastConversationId || null;
   if (!Array.isArray(data.prompts) || data.promptLibraryVersion !== PROMPT_LIBRARY_VERSION || !data.spaces) {
     await chrome.storage.local.set({ prompts: state.prompts, promptLibraryVersion: PROMPT_LIBRARY_VERSION, spaces: state.spaces });
   }
@@ -230,10 +251,32 @@ async function loadLibraryData() {
   renderQuickPrompts();
 }
 
+async function applyStartupBehavior() {
+  if (state.settings?.startupBehavior === "new_chat") {
+    startNewChat({ skipConfirmation: true });
+    return;
+  }
+  const { conversations = [] } = await chrome.storage.local.get("conversations");
+  const stored = Array.isArray(conversations) ? conversations : [];
+  const lastOpenedCandidate = stored.find((conversation) => conversation.id === state.lastConversationId);
+  const lastOpened = lastOpenedCandidate && state.spaces.some((space) => space.id === (lastOpenedCandidate.spaceId || DEFAULT_SPACE.id))
+    ? lastOpenedCandidate : null;
+  const latestInSpace = stored
+    .filter((conversation) => (conversation.spaceId || DEFAULT_SPACE.id) === state.currentSpaceId)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0];
+  const conversation = lastOpened || latestInSpace;
+  if (!conversation) {
+    startNewChat({ skipConfirmation: true });
+    return;
+  }
+  await restoreConversation(conversation, { skipConfirmation: true, showFeedback: true });
+}
+
 function ensureModelProfiles(settings) {
   if (Array.isArray(settings.modelProfiles) && settings.modelProfiles.length) {
-    const active = settings.modelProfiles.find((profile) => profile.id === settings.activeProfileId) || settings.modelProfiles[0];
-    return { ...settings, ...active, activeProfileId: active.id };
+    const profiles = mergeBuiltInModelProfiles(settings.modelProfiles, settings.modelProfileLibraryVersion);
+    const active = profiles.find((profile) => profile.id === settings.activeProfileId) || profiles[0];
+    return { ...settings, ...active, activeProfileId: active.id, modelProfiles: profiles, modelProfileLibraryVersion: MODEL_PROFILE_LIBRARY_VERSION };
   }
   const profile = {
     id: settings.activeProfileId || "default",
@@ -245,7 +288,17 @@ function ensureModelProfiles(settings) {
     apiKey: settings.apiKey,
     maxOutputTokens: settings.maxOutputTokens || 1800
   };
-  return { ...settings, activeProfileId: profile.id, modelProfiles: [profile] };
+  const profiles = mergeBuiltInModelProfiles([profile], 0);
+  return { ...settings, activeProfileId: profile.id, modelProfiles: profiles, modelProfileLibraryVersion: MODEL_PROFILE_LIBRARY_VERSION };
+}
+
+function mergeBuiltInModelProfiles(profiles, libraryVersion) {
+  const next = profiles.map((profile) => ({ ...profile }));
+  if (Number(libraryVersion || 0) >= MODEL_PROFILE_LIBRARY_VERSION) return next;
+  for (const builtIn of BUILT_IN_MODEL_PROFILES) {
+    if (!next.some((profile) => profile.provider === builtIn.provider)) next.push({ ...builtIn });
+  }
+  return next;
 }
 
 function updateModeUI() {
@@ -255,7 +308,7 @@ function updateModeUI() {
   ui.connectionModeSelect.value = webMode ? "chatgpt_web" : "api";
   ui.modelButton.classList.toggle("is-ready", ready);
   ui.modelName.textContent = webMode ? "ChatGPT 网页" : activeProfileName(settings);
-  ui.modelButton.title = webMode
+  ui.modelButton.dataset.tooltip = webMode
     ? "使用已登录的 ChatGPT 网页，不读取 Cookie"
     : ready ? `${settings.provider || "OpenAI"} · ${settings.model}` : "点击右上角设置模型";
   ui.importChatGPTButton.hidden = !webMode;
@@ -385,6 +438,7 @@ async function runAction(actionName) {
 async function sendUserPrompt() {
   const text = ui.promptInput.value.trim();
   if ((!text && !state.attachments.length) || state.busy || !ensureModelConfigured()) return;
+  if (!ensureImageInputSupported()) return;
   const taskPrompt = text || "请分析并总结我附加的内容；如果包含图片，请描述关键信息并指出不确定之处。";
   const displayText = text || `分析附件（${state.attachments.length} 个）`;
   ui.promptInput.value = "";
@@ -394,6 +448,7 @@ async function sendUserPrompt() {
 }
 
 async function performRequest({ displayText, taskPrompt }) {
+  if (!ensureImageInputSupported()) return;
   if (state.settings?.connectionMode === "chatgpt_web") {
     return performChatGPTHandoff({ displayText, taskPrompt });
   }
@@ -692,13 +747,17 @@ async function deleteAssistantMessage(message) {
   ui.messageList.querySelector(`[data-message-id="${message.id}"]`)?.remove();
   if (state.lastImportedChatGPTText === message.content) state.lastImportedChatGPTText = "";
 
-  const { localArtifacts = [], conversations = [] } = await chrome.storage.local.get(["localArtifacts", "conversations"]);
+  const { localArtifacts = [], conversations = [], uiPreferences = {} } = await chrome.storage.local.get(["localArtifacts", "conversations", "uiPreferences"]);
   const patch = {};
   if (Array.isArray(localArtifacts)) {
     patch.localArtifacts = localArtifacts.filter((item) => item.messageId !== message.id);
   }
   if (!state.messages.length && state.conversationId && Array.isArray(conversations)) {
     patch.conversations = conversations.filter((item) => item.id !== state.conversationId);
+    if (state.lastConversationId === state.conversationId) {
+      state.lastConversationId = null;
+      patch.uiPreferences = { ...uiPreferences, lastConversationId: null };
+    }
   }
   if (Object.keys(patch).length) await chrome.storage.local.set(patch);
 
@@ -820,17 +879,21 @@ async function openArtifact(message, artifactIndex) {
 }
 
 function saveMessageToLocalFile(message) {
-  const blob = new Blob([`\uFEFF${message.content}`], { type: "text/markdown;charset=utf-8" });
+  downloadLocalText(localAnswerFilename(message), message.content);
+  showToast("回答已保存为本地 Markdown 文件");
+}
+
+function downloadLocalText(filename, content) {
+  const blob = new Blob([`\uFEFF${content}`], { type: "text/markdown;charset=utf-8" });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
-  link.download = localAnswerFilename(message);
+  link.download = filename;
   link.hidden = true;
   document.body.appendChild(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-  showToast("回答已保存为本地 Markdown 文件");
 }
 
 function localAnswerFilename(message) {
@@ -1040,8 +1103,25 @@ function renderAttachments() {
   ui.attachmentList.replaceChildren();
   for (const item of state.attachments) {
     const chip = document.createElement("div");
-    chip.className = "attachment-chip";
-    chip.innerHTML = `<span class="attachment-icon">${item.kind === "image" ? "图" : "文"}</span><span>${escapeHtml(item.name)}</span><button type="button" data-remove-attachment="${item.id}" aria-label="移除附件">×</button>`;
+    chip.className = `attachment-chip${item.kind === "image" ? " is-image" : ""}`;
+    const icon = document.createElement("span");
+    icon.className = "attachment-icon";
+    if (item.kind === "image" && item.dataUrl) {
+      const preview = document.createElement("img");
+      preview.src = item.dataUrl;
+      preview.alt = "";
+      icon.appendChild(preview);
+    } else {
+      icon.textContent = "文";
+    }
+    const name = document.createElement("span");
+    name.textContent = item.name;
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.dataset.removeAttachment = item.id;
+    removeButton.setAttribute("aria-label", `移除附件 ${item.name}`);
+    removeButton.textContent = "×";
+    chip.append(icon, name, removeButton);
     ui.attachmentList.appendChild(chip);
   }
   ui.attachmentList.hidden = state.attachments.length === 0;
@@ -1057,7 +1137,46 @@ function handleAttachmentClick(event) {
 
 async function handleFileSelection() {
   const files = [...ui.fileInput.files];
-  for (const file of files.slice(0, Math.max(0, MAX_ATTACHMENT_COUNT - state.attachments.length))) {
+  await addFilesToAttachments(files);
+  ui.fileInput.value = "";
+}
+
+async function handleComposerPaste(event) {
+  const imageFiles = [...(event.clipboardData?.items || [])]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (!imageFiles.length) return;
+
+  const renamedFiles = imageFiles.map((file, index) => new File(
+    [file],
+    pastedImageName(file, index),
+    { type: file.type || "image/png", lastModified: Date.now() }
+  ));
+  const added = await addFilesToAttachments(renamedFiles);
+  if (added) {
+    showToast(`已粘贴 ${added} 张图片，可继续输入问题后发送`);
+    updateComposerState();
+  }
+}
+
+function pastedImageName(file, index) {
+  const extension = file.type === "image/jpeg" ? "jpg"
+    : file.type === "image/webp" ? "webp"
+      : file.type === "image/gif" ? "gif" : "png";
+  const time = new Date().toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }).replaceAll(":", "-");
+  return `粘贴图片-${time}${index ? `-${index + 1}` : ""}.${extension}`;
+}
+
+async function addFilesToAttachments(files) {
+  const available = Math.max(0, MAX_ATTACHMENT_COUNT - state.attachments.length);
+  if (!available) {
+    showToast(`一次最多附加 ${MAX_ATTACHMENT_COUNT} 个文件`);
+    return 0;
+  }
+  if (files.length > available) showToast(`只添加了前 ${available} 个文件；一次最多 ${MAX_ATTACHMENT_COUNT} 个`);
+  let added = 0;
+  for (const file of files.slice(0, available)) {
     if (file.size > MAX_ATTACHMENT_FILE_BYTES) {
       showToast(`${file.name} 超过单文件 3MB 限制，已跳过`);
       continue;
@@ -1067,14 +1186,14 @@ async function handleFileSelection() {
       continue;
     }
     if (file.type.startsWith("image/")) {
-      addAttachment({ name: file.name, kind: "image", type: file.type, size: file.size, dataUrl: await readFileAsDataUrl(file) });
+      if (addAttachment({ name: file.name, kind: "image", type: file.type, size: file.size, dataUrl: await readFileAsDataUrl(file) })) added += 1;
     } else if (/^(text\/|application\/json)/.test(file.type) || /\.(txt|md|csv|json|html)$/i.test(file.name)) {
-      addAttachment({ name: file.name, kind: "text", type: file.type || "text/plain", size: file.size, text: await file.text() });
+      if (addAttachment({ name: file.name, kind: "text", type: file.type || "text/plain", size: file.size, text: await file.text() })) added += 1;
     } else {
       showToast(`${file.name} 暂不支持；当前支持图片和文本文件`);
     }
   }
-  ui.fileInput.value = "";
+  return added;
 }
 
 function readFileAsDataUrl(file) {
@@ -1093,17 +1212,6 @@ async function attachCurrentPage() {
   await loadActiveTabContext(false);
   ui.readPageButton.classList.add("is-active");
   showToast(state.context?.text ? "当前网页已加入下一条消息" : "页面正文较少，可再附加截图进行视觉理解");
-}
-
-async function toggleFocusMode() {
-  if (!state.tab?.id) return;
-  try {
-    const result = await chrome.tabs.sendMessage(state.tab.id, { type: "TOGGLE_FOCUS_MODE" });
-    ui.focusModeButton.classList.toggle("is-active", Boolean(result?.active));
-    showToast(result?.active ? "已开启专注阅读" : "已退出专注阅读");
-  } catch {
-    showToast("此页面不支持专注阅读模式");
-  }
 }
 
 function showChat() {
@@ -1146,7 +1254,7 @@ function startNewChat({ skipConfirmation = false } = {}) {
 
 async function saveConversation() {
   if (!state.messages.length) return;
-  const { conversations = [] } = await chrome.storage.local.get("conversations");
+  const { conversations = [], uiPreferences = {} } = await chrome.storage.local.get(["conversations", "uiPreferences"]);
   const stored = Array.isArray(conversations) ? conversations : [];
   const now = Date.now();
   if (!state.conversationId) {
@@ -1178,17 +1286,21 @@ async function saveConversation() {
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 200);
   while (next.length > 1 && new Blob([JSON.stringify(next)]).size > 8 * 1024 * 1024) next.pop();
-  await chrome.storage.local.set({ conversations: next });
+  state.lastConversationId = conversation.id;
+  await chrome.storage.local.set({
+    conversations: next,
+    uiPreferences: { ...uiPreferences, currentSpaceId: state.currentSpaceId, lastConversationId: conversation.id }
+  });
 }
 
 async function openHistory() {
   ui.historySearchInput.value = "";
-  await renderHistory();
   ui.historyDrawer.hidden = false;
   ui.drawerBackdrop.hidden = false;
+  await renderHistory({ focusCurrent: true });
 }
 
-async function renderHistory() {
+async function renderHistory({ focusCurrent = false } = {}) {
   const renderToken = ++state.historyRenderToken;
   const { conversations = [] } = await chrome.storage.local.get("conversations");
   if (renderToken !== state.historyRenderToken) return;
@@ -1206,14 +1318,18 @@ async function renderHistory() {
     empty.textContent = query ? "没有找到匹配的聊天。" : "当前空间还没有对话。完成一次回答后，它会出现在这里。";
     ui.historyList.appendChild(empty);
   } else {
+    let currentRow = null;
     for (const conversation of filtered) {
       const row = document.createElement("div");
-      row.className = "history-item-row";
+      const isCurrent = conversation.id === state.conversationId;
+      row.className = `history-item-row${isCurrent ? " is-current" : ""}`;
+      row.dataset.conversationId = conversation.id;
       const openButton = document.createElement("button");
       openButton.className = "history-item";
       openButton.type = "button";
       openButton.innerHTML = `<strong>${escapeHtml(conversation.title || "新对话")}</strong><span>${escapeHtml(conversation.pageTitle || "无关联网页")} · ${formatDate(conversation.updatedAt)}</span>`;
-      openButton.addEventListener("click", () => restoreConversation(conversation));
+      if (isCurrent) openButton.setAttribute("aria-current", "true");
+      openButton.addEventListener("click", () => restoreConversation(conversation).catch((error) => showToast(error.message)));
       const editButton = document.createElement("button");
       editButton.className = "history-title-edit";
       editButton.type = "button";
@@ -1223,7 +1339,9 @@ async function renderHistory() {
       editButton.addEventListener("click", () => editConversationTitle(conversation));
       row.append(openButton, editButton);
       ui.historyList.appendChild(row);
+      if (isCurrent) currentRow = row;
     }
+    if (focusCurrent && currentRow) requestAnimationFrame(() => currentRow.scrollIntoView({ block: "center" }));
   }
 }
 
@@ -1251,8 +1369,13 @@ function closeHistory() {
   ui.drawerBackdrop.hidden = true;
 }
 
-function restoreConversation(conversation) {
-  if (!startNewChat()) return;
+async function restoreConversation(conversation, { skipConfirmation = false, showFeedback = false } = {}) {
+  if (!startNewChat({ skipConfirmation })) return false;
+  const conversationSpaceId = conversation.spaceId || DEFAULT_SPACE.id;
+  if (state.spaces.some((space) => space.id === conversationSpaceId)) {
+    state.currentSpaceId = conversationSpaceId;
+    updateSpaceUI();
+  }
   state.messages = conversation.messages || [];
   state.conversationId = conversation.id;
   state.conversationCreatedAt = conversation.createdAt;
@@ -1262,6 +1385,10 @@ function restoreConversation(conversation) {
   showChat();
   closeHistory();
   scrollToBottom();
+  state.lastConversationId = conversation.id;
+  await updateUiPreferences({ currentSpaceId: state.currentSpaceId, lastConversationId: conversation.id });
+  if (showFeedback) showToast("已恢复上次打开的会话");
+  return true;
 }
 
 async function clearHistory() {
@@ -1273,8 +1400,101 @@ async function clearHistory() {
   const { conversations = [] } = await chrome.storage.local.get("conversations");
   const next = conversations.filter((conversation) => (conversation.spaceId || DEFAULT_SPACE.id) !== state.currentSpaceId);
   await chrome.storage.local.set({ conversations: next });
+  if (conversations.some((conversation) => conversation.id === state.lastConversationId && (conversation.spaceId || DEFAULT_SPACE.id) === state.currentSpaceId)) {
+    state.lastConversationId = null;
+    await updateUiPreferences({ lastConversationId: null });
+  }
   startNewChat({ skipConfirmation: true });
   showToast("当前空间的历史记录已清空");
+}
+
+async function importHistoryFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) return showToast("聊天历史文件不能超过 10MB");
+  try {
+    const parsed = SideMindHistory.parseHistoryMarkdown(await file.text());
+    const { conversations = [] } = await chrome.storage.local.get("conversations");
+    const stored = Array.isArray(conversations) ? conversations : [];
+    const existingKeys = new Set(stored.map(conversationImportKey));
+    const imported = parsed.conversations
+      .map((conversation) => ({ ...conversation, spaceId: state.currentSpaceId }))
+      .filter((conversation) => !existingKeys.has(conversationImportKey(conversation)));
+    if (!imported.length) return showToast("这些聊天记录已经导入过了");
+
+    const next = [...imported, ...stored]
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+      .slice(0, 200);
+    while (next.length > 1 && new Blob([JSON.stringify(next)]).size > 8 * 1024 * 1024) next.pop();
+    await chrome.storage.local.set({ conversations: next });
+    await renderHistory();
+    showToast(`已导入 ${imported.length} 个会话到${currentSpaceName()}`);
+  } catch (error) {
+    showToast(error.message || "聊天历史导入失败");
+  }
+}
+
+function conversationImportKey(conversation) {
+  return conversation.importKey || [
+    conversation.title || "",
+    Number(conversation.createdAt || 0),
+    conversation.url || "",
+    conversation.messages?.length || 0
+  ].join("|");
+}
+
+function currentSpaceName() {
+  return state.spaces.find((item) => item.id === state.currentSpaceId)?.name || DEFAULT_SPACE.name;
+}
+
+async function exportCurrentSpaceHistory() {
+  const { conversations = [] } = await chrome.storage.local.get("conversations");
+  const history = (Array.isArray(conversations) ? conversations : [])
+    .filter((conversation) => (conversation.spaceId || DEFAULT_SPACE.id) === state.currentSpaceId)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  if (!history.length) return showToast("当前空间还没有可导出的聊天记录");
+
+  const space = state.spaces.find((item) => item.id === state.currentSpaceId) || DEFAULT_SPACE;
+  const markdown = buildHistoryExportMarkdown(space, history);
+  const date = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  const dateLabel = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+  const safeSpaceName = String(space.name || "默认空间").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 36) || "默认空间";
+  downloadLocalText(`SideMind-聊天历史-${safeSpaceName}-${dateLabel}.md`, markdown);
+  showToast(`已导出 ${history.length} 个会话`);
+}
+
+function buildHistoryExportMarkdown(space, conversations) {
+  const lines = [
+    `# SideMind 聊天历史：${space.name || "默认空间"}`,
+    "",
+    `- 导出时间：${formatExportDate(Date.now())}`,
+    `- 会话数量：${conversations.length}`,
+    "",
+    "---"
+  ];
+  conversations.forEach((conversation, index) => {
+    lines.push("", `## ${index + 1}. ${conversation.title || "新对话"}`, "");
+    lines.push(`- 创建时间：${formatExportDate(conversation.createdAt)}`);
+    lines.push(`- 更新时间：${formatExportDate(conversation.updatedAt)}`);
+    if (conversation.pageTitle) lines.push(`- 关联网页：${conversation.pageTitle}`);
+    if (conversation.url) lines.push(`- 网页地址：${conversation.url}`);
+    lines.push("");
+    for (const message of conversation.messages || []) {
+      const role = message.role === "assistant" ? "SideMind" : "用户";
+      const model = message.role === "assistant" && message.modelName ? ` · ${message.modelName}` : "";
+      lines.push(`### ${role}${model} · ${formatExportDate(message.createdAt)}`, "", String(message.content || "").trim() || "（空消息）", "");
+      if (message.hadAttachments) lines.push("> 此轮包含图片或附件；附件文件本身未保存在聊天历史中。", "");
+    }
+    lines.push("---");
+  });
+  return lines.join("\n");
+}
+
+function formatExportDate(timestamp) {
+  if (!timestamp) return "未知";
+  return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
 }
 
 function togglePopover(type) {
@@ -1311,7 +1531,8 @@ function renderModelProfiles() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `popover-item${profile.id === state.settings.activeProfileId ? " is-active" : ""}`;
-    button.innerHTML = `<span class="popover-item-icon">${providerIcon(profile.provider)}</span><span class="popover-item-copy"><strong>${escapeHtml(profile.name || profile.model)}</strong><small>${escapeHtml(profile.provider)} · ${escapeHtml(profile.model)}</small></span><span>${profile.id === state.settings.activeProfileId ? "✓" : ""}</span>`;
+    const capability = isKnownTextOnlyProfile(profile) ? " · 仅文本" : "";
+    button.innerHTML = `<span class="popover-item-icon">${providerIcon(profile.provider)}</span><span class="popover-item-copy"><strong>${escapeHtml(profile.name || profile.model)}</strong><small>${escapeHtml(profile.provider)} · ${escapeHtml(profile.model)}${capability}</small></span><span>${profile.id === state.settings.activeProfileId ? "✓" : ""}</span>`;
     button.addEventListener("click", () => switchModelProfile(profile.id));
     ui.modelProfileList.appendChild(button);
   }
@@ -1512,6 +1733,67 @@ async function cycleReasoningMode() {
 function updateReasoningUI() {
   ui.reasoningButton.classList.toggle("is-active", state.reasoningEffort !== "none");
   ui.reasoningButton.querySelector("span").textContent = state.reasoningEffort === "none" ? "思考关" : state.reasoningEffort === "high" ? "思考" : "深度";
+  ui.reasoningButton.dataset.tooltip = state.reasoningEffort === "none"
+    ? "思考模式：当前关闭，点击切换为高强度"
+    : state.reasoningEffort === "high"
+      ? "思考模式：当前为高强度，点击切换为最大"
+      : "思考模式：当前为最大强度，点击关闭";
+}
+
+function bindControlTooltips() {
+  document.addEventListener("pointerover", (event) => {
+    const target = event.target.closest?.("[data-tooltip]");
+    if (!target || target.contains(event.relatedTarget)) return;
+    scheduleControlTooltip(target, 320);
+  });
+  document.addEventListener("pointerout", (event) => {
+    const target = event.target.closest?.("[data-tooltip]");
+    if (!target || target.contains(event.relatedTarget)) return;
+    hideControlTooltip();
+  });
+  document.addEventListener("focusin", (event) => {
+    const target = event.target.closest?.("[data-tooltip]");
+    if (target) scheduleControlTooltip(target, 0);
+  });
+  document.addEventListener("focusout", (event) => {
+    if (event.target.closest?.("[data-tooltip]")) hideControlTooltip();
+  });
+  document.addEventListener("pointerdown", hideControlTooltip, true);
+  window.addEventListener("resize", hideControlTooltip);
+  window.addEventListener("scroll", hideControlTooltip, true);
+}
+
+function scheduleControlTooltip(target, delay) {
+  hideControlTooltip();
+  state.controlTooltipTimer = window.setTimeout(() => showControlTooltip(target), delay);
+}
+
+function showControlTooltip(target) {
+  const text = target?.dataset.tooltip?.trim();
+  if (!text || !target.isConnected || target.hidden) return;
+  state.controlTooltipTarget = target;
+  ui.controlTooltip.textContent = text;
+  ui.controlTooltip.hidden = false;
+  target.setAttribute("aria-describedby", "controlTooltip");
+  const targetRect = target.getBoundingClientRect();
+  const tooltipRect = ui.controlTooltip.getBoundingClientRect();
+  const margin = 8;
+  const left = Math.min(
+    window.innerWidth - tooltipRect.width - margin,
+    Math.max(margin, targetRect.left + (targetRect.width - tooltipRect.width) / 2)
+  );
+  let top = targetRect.top - tooltipRect.height - margin;
+  if (top < margin) top = targetRect.bottom + margin;
+  ui.controlTooltip.style.left = `${left}px`;
+  ui.controlTooltip.style.top = `${top}px`;
+}
+
+function hideControlTooltip() {
+  window.clearTimeout(state.controlTooltipTimer);
+  state.controlTooltipTimer = null;
+  if (state.controlTooltipTarget) state.controlTooltipTarget.removeAttribute("aria-describedby");
+  state.controlTooltipTarget = null;
+  if (ui.controlTooltip) ui.controlTooltip.hidden = true;
 }
 
 async function updateUiPreferences(patch) {
@@ -1538,6 +1820,20 @@ function ensureModelConfigured() {
   showToast("请先配置模型与 API Key");
   chrome.runtime.openOptionsPage();
   return false;
+}
+
+function ensureImageInputSupported() {
+  if (!getImageDataUrls().length || state.settings?.connectionMode === "chatgpt_web") return true;
+  if (!isKnownTextOnlyProfile(state.settings)) return true;
+  showToast("DeepSeek V4 只支持文本；图片已保留，请切换视觉模型或“网页”模式");
+  togglePopover("model");
+  return false;
+}
+
+function isKnownTextOnlyProfile(profile) {
+  const provider = String(profile?.provider || "").toLowerCase();
+  const baseUrl = String(profile?.baseUrl || "").toLowerCase();
+  return provider === "deepseek" || /(^|\.)api\.deepseek\.com(?:\/|$)/.test(baseUrl.replace(/^https?:\/\//, ""));
 }
 
 function updateComposerState() {

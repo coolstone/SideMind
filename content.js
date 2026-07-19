@@ -41,12 +41,6 @@
       return false;
     }
 
-    if (message?.type === "TOGGLE_FOCUS_MODE") {
-      const active = document.documentElement.classList.toggle("sidemind-focus-mode");
-      sendResponse({ ok: true, active });
-      return false;
-    }
-
     if (message?.type === "CHATGPT_FILL" && onChatGPT) {
       fillChatGPTComposer(message.payload)
         .then(sendResponse)
@@ -134,8 +128,11 @@
   }
 
   function extractPageContext() {
-    const title = document.title || "无标题页面";
-    const description = document.querySelector('meta[name="description"]')?.content || "";
+    const localFileName = location.protocol === "file:"
+      ? decodeURIComponent(location.pathname.split("/").filter(Boolean).at(-1) || "本地文件")
+      : "";
+    const title = document.title || localFileName || "无标题页面";
+    const description = document.querySelector('meta[name="description"]')?.content || (localFileName ? "本地文件" : "");
     const canonical = document.querySelector('link[rel="canonical"]')?.href || location.href;
     const headings = [...document.querySelectorAll("h1, h2, h3")]
       .map((node) => node.innerText.trim())

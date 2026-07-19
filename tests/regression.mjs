@@ -75,6 +75,12 @@ const deepSeekMax = evaluate(`buildChatBody(
 assert.equal(deepSeekMax.thinking.type, "enabled");
 assert.equal(deepSeekMax.reasoning_effort, "max");
 
+const visionSchemaError = evaluate(`readableError(new Error("Failed to deserialize: unknown variant image_url, expected text"))`);
+assert.match(visionSchemaError, /当前模型接口只支持文本/);
+
+const capturePermissionError = evaluate(`readableError(new Error("Either the '<all_urls>' or 'activeTab' permission is required."))`);
+assert.match(capturePermissionError, /页面截图权限尚未生效/);
+
 const responses = evaluate(`buildResponsesBody(
   { model: "gpt-test", maxOutputTokens: 4096 },
   { instructions: "system", prompt: "hello", reasoningEffort: "max" }
@@ -88,8 +94,10 @@ assert.equal(bridgeSendCount, 2, "a missing old content script should be retried
 assert.equal(bridgeInjectionCount, 1, "the current content script should be injected before retrying");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert.equal(manifest.version, "0.5.4");
+assert.equal(manifest.version, "0.5.15");
 assert.ok(manifest.permissions.includes("scripting"));
+assert.ok(manifest.host_permissions.includes("<all_urls>"));
+assert.ok(manifest.content_scripts[0].matches.includes("file:///*"));
 assert.equal(manifest.icons["128"], "assets/logo-128.png");
 assert.equal(manifest.action.default_icon["16"], "assets/logo-16.png");
 for (const size of [16, 32, 48, 128]) {
@@ -97,9 +105,25 @@ for (const size of [16, 32, 48, 128]) {
 }
 assert.ok(fs.existsSync(path.join(root, "assets/logo-wordmark.svg")));
 assert.ok(fs.existsSync(path.join(root, "assets/logo-wordmark.png")));
+const usageGuide = fs.readFileSync(path.join(root, "SideMind-使用与扩展指南.md"), "utf8");
+assert.match(usageGuide, /使用压缩包安装到 Chrome/);
+assert.match(usageGuide, /为什么做 SideMind/);
+assert.match(usageGuide, /最开始的年度订阅最高约为 999 元/);
+assert.match(usageGuide, /最低档也已经到了 1699 元/);
+assert.match(usageGuide, /功能来自长期使用中最常出现的实际需求/);
+assert.match(usageGuide, /配置 DeepSeek API Key/);
+assert.match(usageGuide, /与在线 Markdown 工具联动/);
+assert.match(usageGuide, /方便自己继续扩展/);
+assert.match(usageGuide, /允许访问文件网址/);
 assert.match(backgroundSource, /const panelPromise = openPanel\(sender\.tab\);\s+importChatGPTResponse\(message\.text, panelPromise\)/);
 assert.match(backgroundSource, /Promise\.allSettled\(\[panelPromise, storePromise\]\)/);
+assert.match(backgroundSource, /function isFileSchemeAccessAllowed/);
+assert.match(backgroundSource, /允许访问文件网址/);
+assert.match(backgroundSource, /backupReminderPending/);
+assert.match(backgroundSource, /chrome\.runtime\.openOptionsPage/);
 assert.doesNotMatch(backgroundSource, /await chrome\.storage\.session\.set\([\s\S]{0,220}await openPanel\(tab\)/);
+
+const contentStyleSource = fs.readFileSync(path.join(root, "content.css"), "utf8");
 
 for (const filename of fs.readdirSync(root).filter((name) => name.endsWith(".html"))) {
   const html = fs.readFileSync(path.join(root, filename), "utf8");
@@ -110,6 +134,25 @@ for (const filename of fs.readdirSync(root).filter((name) => name.endsWith(".htm
 const sidepanelSource = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
 assert.match(sidepanelSource, /MAX_ATTACHMENT_TOTAL_BYTES = 5 \* 1024 \* 1024/);
 assert.match(sidepanelSource, /!ui\.promptInput\.value\.trim\(\) && !state\.attachments\.length/);
+assert.match(sidepanelSource, /addEventListener\("paste"/);
+assert.match(sidepanelSource, /async function handleComposerPaste/);
+assert.match(sidepanelSource, /item\.kind === "file" && item\.type\.startsWith\("image\/"\)/);
+assert.match(sidepanelSource, /已粘贴 \$\{added\} 张图片/);
+assert.match(sidepanelSource, /function addFilesToAttachments/);
+assert.match(sidepanelSource, /function ensureImageInputSupported/);
+assert.match(sidepanelSource, /function isKnownTextOnlyProfile/);
+assert.match(sidepanelSource, /DeepSeek V4 只支持文本；图片已保留/);
+assert.match(sidepanelSource, /togglePopover\("model"\)/);
+assert.match(sidepanelSource, /async function exportCurrentSpaceHistory/);
+assert.match(sidepanelSource, /function buildHistoryExportMarkdown/);
+assert.match(sidepanelSource, /async function importHistoryFile/);
+assert.match(sidepanelSource, /conversationImportKey/);
+assert.match(sidepanelSource, /SideMind-聊天历史-/);
+assert.match(sidepanelSource, /附件文件本身未保存在聊天历史中/);
+assert.match(sidepanelSource, /function bindControlTooltips/);
+assert.match(sidepanelSource, /function showControlTooltip/);
+assert.match(sidepanelSource, /aria-describedby/);
+assert.match(sidepanelSource, /controlTooltipTimer/);
 assert.match(sidepanelSource, /window\.confirm\(/);
 for (const tool of ["copy", "save", "quote", "regenerate", "share", "speak", "insert", "delete"]) {
   assert.match(sidepanelSource, new RegExp(`messageToolButton\\(\\"${tool}\\"`), `missing assistant action: ${tool}`);
@@ -128,18 +171,30 @@ assert.match(sidepanelSource, /slice\(0, 5\)/);
 assert.match(sidepanelSource, /updateSelectionPreview/);
 assert.match(sidepanelSource, /PAGE_SELECTION_CHANGED/);
 assert.match(sidepanelSource, /当前未发送的文字或附件将被清空/);
-assert.match(sidepanelSource, /function restoreConversation\(conversation\) \{\s+if \(!startNewChat\(\)\) return;/);
+assert.match(sidepanelSource, /async function restoreConversation\(conversation, \{ skipConfirmation = false, showFeedback = false \} = \{\}\)/);
+assert.match(sidepanelSource, /if \(!startNewChat\(\{ skipConfirmation \}\)\) return false/);
 assert.match(sidepanelSource, /async function editConversationTitle/);
 assert.match(sidepanelSource, /titleCustomized/);
 assert.match(sidepanelSource, /state\.conversationTitle = conversation\.title/);
 assert.match(sidepanelSource, /修改聊天标题/);
+assert.match(sidepanelSource, /async function applyStartupBehavior/);
+assert.match(sidepanelSource, /startupBehavior === "new_chat"/);
+assert.match(sidepanelSource, /lastConversationId/);
+assert.match(sidepanelSource, /renderHistory\(\{ focusCurrent: true \}\)/);
+assert.match(sidepanelSource, /scrollIntoView\(\{ block: "center" \}\)/);
 assert.match(sidepanelSource, /function extractGeneratedArtifacts/);
 assert.match(sidepanelSource, /function createArtifactShelf/);
 assert.match(sidepanelSource, /chrome\.runtime\.getURL\(`artifact\.html\?id=/);
 assert.match(sidepanelSource, /localArtifacts/);
 const contentSource = fs.readFileSync(path.join(root, "content.js"), "utf8");
+assert.doesNotMatch(sidepanelSource, /focusModeButton|toggleFocusMode/);
+assert.doesNotMatch(contentSource, /TOGGLE_FOCUS_MODE|sidemind-focus-mode/);
+assert.doesNotMatch(contentStyleSource, /sidemind-focus-mode/);
+assert.match(contentSource, /location\.protocol === "file:"/);
+assert.match(contentSource, /decodeURIComponent\(location\.pathname/);
 assert.match(contentSource, /if \(!onChatGPT\) return;\s+if \(document\.getElementById\("sidemind-chatgpt-sync"\)\) return;/);
 assert.match(contentSource, /回答已保存；请点击 SideMind 扩展图标打开侧栏/);
+assert.match(backgroundSource, /当前模型接口只支持文本，不能直接接收图片/);
 const artifactFunctionsStart = sidepanelSource.indexOf("function extractGeneratedArtifacts");
 const artifactFunctionsEnd = sidepanelSource.indexOf("async function openArtifact", artifactFunctionsStart);
 assert.ok(artifactFunctionsStart > 0 && artifactFunctionsEnd > artifactFunctionsStart);
@@ -160,6 +215,38 @@ const templateVariables = templateVariablesContext.__templateVariables;
 assert.deepEqual(Array.from(templateVariables.extractTemplateVariables("用 ${lang} 处理 ${input}，再次使用 ${lang}")), ["lang", "input"]);
 assert.equal(templateVariables.interpolatePromptTemplate("请用 ${lang} 处理：${input}", { lang: "简体中文", input: "示例" }), "请用 简体中文 处理：示例");
 assert.equal(templateVariables.interpolatePromptTemplate("保留 ${missing}", {}), "保留 ${missing}");
+
+const historyTransferSource = fs.readFileSync(path.join(root, "history-transfer.js"), "utf8");
+const historyTransferContext = vm.createContext({ console });
+new vm.Script(historyTransferSource).runInContext(historyTransferContext);
+const importedHistory = historyTransferContext.SideMindHistory.parseHistoryMarkdown(`# SideMind 聊天历史：默认空间
+
+- 导出时间：2026/7/19 16:04:24
+- 会话数量：1
+
+---
+
+## 1. 测试记录
+
+- 创建时间：2026/7/19 13:48:23
+- 更新时间：2026/7/19 13:49:23
+- 关联网页：示例页面
+- 网页地址：https://example.com/
+
+### 用户 · 2026/7/19 13:48:23
+
+请总结
+
+### SideMind · deepseek-v4-flash · 2026/7/19 13:49:23
+
+这是回答。
+
+---`);
+assert.equal(importedHistory.spaceName, "默认空间");
+assert.equal(importedHistory.conversations.length, 1);
+assert.equal(importedHistory.conversations[0].messages.length, 2);
+assert.equal(importedHistory.conversations[0].messages[1].modelName, "deepseek-v4-flash");
+assert.equal(importedHistory.conversations[0].url, "https://example.com/");
 
 const promptLibrarySource = fs.readFileSync(path.join(root, "prompt-library.js"), "utf8");
 const promptLibraryContext = vm.createContext({});
@@ -186,9 +273,23 @@ assert.match(exactLibrary.find((item) => item.name === "行业分析-1市场地�
 
 const optionsHtml = fs.readFileSync(path.join(root, "options.html"), "utf8");
 assert.match(optionsHtml, /id="responseLanguage"/);
+assert.match(optionsHtml, /id="startupBehavior"/);
+assert.match(optionsHtml, /恢复上次打开的会话/);
 assert.match(optionsHtml, /\$\{lang\}/);
+assert.match(optionsHtml, /id="backupInstallNotice"/);
+assert.match(optionsHtml, /id="includeApiKeysInBackup"/);
+assert.match(optionsHtml, /id="importBackupButton"/);
+assert.match(optionsHtml, /id="exportBackupButton"/);
 const optionsSource = fs.readFileSync(path.join(root, "options.js"), "utf8");
 assert.match(optionsSource, /responseLanguage/);
+assert.match(optionsSource, /startupBehavior/);
+assert.match(optionsSource, /builtin-deepseek/);
+assert.match(optionsSource, /MODEL_PROFILE_LIBRARY_VERSION/);
+assert.match(optionsSource, /BACKUP_FORMAT = "sidemind-local-backup"/);
+assert.match(optionsSource, /async function exportLocalBackup/);
+assert.match(optionsSource, /async function importLocalBackup/);
+assert.match(optionsSource, /function removeApiKeys/);
+assert.match(optionsSource, /function preserveCurrentApiKeys/);
 const promptsSource = fs.readFileSync(path.join(root, "prompts.js"), "utf8");
 assert.match(promptsSource, /async function movePrompt/);
 assert.match(promptsSource, /function handleDragStart/);
@@ -199,9 +300,24 @@ const sidepanelHtml = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8")
 assert.match(sidepanelHtml, /id="promptOverflowButton"/);
 assert.match(sidepanelHtml, /id="selectionPreview"/);
 assert.match(sidepanelHtml, /id="newChatActionButton"/);
+assert.match(sidepanelHtml, /id="exportHistoryButton"/);
+assert.match(sidepanelHtml, /id="importHistoryButton"/);
+assert.match(sidepanelHtml, /id="importHistoryInput"/);
+assert.match(sidepanelHtml, /导出当前空间/);
+assert.match(sidepanelHtml, /id="controlTooltip" role="tooltip"/);
+assert.match(sidepanelHtml, /data-tooltip="新聊天：清空当前内容并开始新会话"/);
+assert.match(sidepanelHtml, /data-tooltip="发送消息：Enter 发送，Shift \+ Enter 换行"/);
+assert.ok(sidepanelHtml.indexOf("composer-toolbar") < sidepanelHtml.indexOf('id="newChatActionButton"'));
+assert.ok(sidepanelHtml.indexOf("composer-toolbar") < sidepanelHtml.indexOf('id="historyButton"'));
+assert.ok(sidepanelHtml.indexOf('id="newChatActionButton"') < sidepanelHtml.indexOf('id="historyButton"'));
+assert.ok(sidepanelHtml.indexOf('id="historyButton"') < sidepanelHtml.indexOf('id="reasoningButton"'));
+assert.ok(sidepanelHtml.indexOf('id="reasoningButton"') < sidepanelHtml.indexOf('id="readPageButton"'));
+assert.ok(sidepanelHtml.indexOf("composer-actions") < sidepanelHtml.indexOf('id="connectionModeSelect"'));
+assert.match(sidepanelHtml, /<option value="chatgpt_web">网页<\/option>/);
 assert.match(sidepanelHtml, /class="brand-mark" src="assets\/logo\.svg"/);
 assert.ok(sidepanelHtml.indexOf("template-variables.js") < sidepanelHtml.indexOf("prompt-library.js"));
 assert.ok(sidepanelHtml.indexOf("prompt-library.js") < sidepanelHtml.indexOf("sidepanel.js"));
+assert.ok(sidepanelHtml.indexOf("history-transfer.js") < sidepanelHtml.indexOf("sidepanel.js"));
 
 const artifactHtml = fs.readFileSync(path.join(root, "artifact.html"), "utf8");
 const artifactSource = fs.readFileSync(path.join(root, "artifact.js"), "utf8");

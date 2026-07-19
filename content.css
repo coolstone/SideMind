@@ -52,21 +52,6 @@
   background: linear-gradient(135deg, #8c70ff, #6f8cff);
 }
 
-html.sidemind-focus-mode body > *:not(main):not(article),
-html.sidemind-focus-mode nav,
-html.sidemind-focus-mode aside,
-html.sidemind-focus-mode footer {
-  opacity: 0.1 !important;
-  transition: opacity 180ms ease !important;
-}
-
-html.sidemind-focus-mode main,
-html.sidemind-focus-mode article {
-  position: relative !important;
-  z-index: 2147483000 !important;
-  opacity: 1 !important;
-}
-
 #sidemind-chatgpt-sync {
   all: unset;
   position: fixed;

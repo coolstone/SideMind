@@ -41,6 +41,20 @@ label small { color: var(--muted); font-size: 9px; }
 code { padding: 1px 4px; border-radius: 4px; background: #efedf3; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .password-field { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .password-field button { padding: 0 13px; border: 1px solid var(--line); border-radius: 11px; background: #f7f5fa; color: var(--muted); font-size: 10px; cursor: pointer; }
+.backup-install-notice { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:16px; padding:13px 14px; border:1px solid #d6cdf8; border-radius:13px; background:#f2efff; }
+.backup-install-notice strong,.backup-summary strong,.backup-secret-option strong { font-size:11px; }
+.backup-install-notice p,.backup-summary p { margin:4px 0 0; color:var(--muted); font-size:10px; line-height:1.6; }
+.backup-install-notice button { flex:0 0 auto; padding:7px 10px; border:1px solid #cdc2f5; border-radius:8px; background:#fff; color:var(--brand); font-size:9px; cursor:pointer; }
+.backup-summary { padding:13px 14px; border:1px solid var(--line); border-radius:13px; background:#fbfafd; }
+.backup-secret-option { grid-template-columns:18px minmax(0,1fr); align-items:start; gap:9px; padding:11px 12px; border:1px solid var(--line); border-radius:12px; background:#fbfafd; cursor:pointer; }
+.backup-secret-option input { width:16px; height:16px; margin:1px 0 0; padding:0; }
+.backup-secret-option span,.backup-secret-option small { display:block; }
+.backup-secret-option small { margin-top:4px; line-height:1.5; }
+.backup-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:15px; }
+.backup-actions button { height:38px; padding:0 14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:#5e5868; font-size:10px; font-weight:700; cursor:pointer; }
+.backup-actions button:last-child { border-color:#cfc4f5; background:var(--brand); color:#fff; }
+.backup-status { min-height:16px; margin:9px 0 0; color:var(--muted); font-size:10px; }
+.backup-status.success { color:#23805f; }.backup-status.error { color:#b84650; }
 .security-note { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 16px 18px; border: 1px solid #dcd5fa; border-radius: 15px; background: #f0edff; }
 .security-note > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: #fff; color: var(--brand); font-size: 10px; font-weight: 800; }
 .security-note strong { font-size: 11px; }
@@ -54,7 +68,7 @@ code { padding: 1px 4px; border-radius: 4px; background: #efedf3; font: 10px ui-
 .primary-button:disabled, .secondary-button:disabled { opacity: .55; cursor: wait; }
 .settings-card.is-web-mode { border-color: #d8d0fb; background: linear-gradient(145deg, rgba(255,255,255,.96), rgba(242,239,255,.96)); }
 
-@media (max-width: 600px) { .settings-shell { padding-top: 28px; }.two-columns, .profile-grid { grid-template-columns: 1fr; }.profile-actions button { flex:1; }.form-actions { flex-wrap: wrap; }.form-actions p { flex-basis: 100%; }.primary-button, .secondary-button { flex: 1; } }
+@media (max-width: 600px) { .settings-shell { padding-top: 28px; }.two-columns, .profile-grid { grid-template-columns: 1fr; }.profile-actions button { flex:1; }.form-actions { flex-wrap: wrap; }.form-actions p { flex-basis: 100%; }.primary-button, .secondary-button { flex: 1; }.backup-install-notice { flex-direction:column; }.backup-actions { display:grid; grid-template-columns:1fr 1fr; }.backup-actions button { padding:0 8px; } }
 @media (prefers-color-scheme: dark) {
   :root { color-scheme: dark; --bg: #15151b; --surface: #1e1d25; --ink: #f4f1f8; --muted: #aaa4b2; --line: #36333e; }
   body { background: radial-gradient(circle at 80% 0, #2d2547, transparent 30%), var(--bg); }
@@ -64,5 +78,6 @@ code { padding: 1px 4px; border-radius: 4px; background: #efedf3; font: 10px ui-
   code { background: #292731; }
   .security-note { border-color: #493e73; background: #28223f; }
   .security-note > span { background: #342b53; }.security-note p { color: #b9afcf; }
+  .backup-install-notice { border-color:#493e73; background:#28223f; }.backup-install-notice button { border-color:#4d426e; background:#342b53; }.backup-summary,.backup-secret-option { background:#25242d; }
   .password-field button { background: #292731; }.secondary-button { background: var(--surface); }
 }

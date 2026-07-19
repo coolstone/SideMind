@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SideMind AI</title>
-    <link rel="stylesheet" href="sidepanel.css?v=4" />
+    <link rel="stylesheet" href="sidepanel.css?v=8" />
   </head>
   <body>
     <div class="app-shell">
@@ -18,13 +18,7 @@
           <span id="spaceName">默认空间</span><span>⌄</span>
         </button>
         <div class="header-actions">
-          <button class="icon-button new-chat-action" id="newChatActionButton" title="新聊天" type="button" aria-label="新聊天">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-          </button>
           <button class="icon-button" id="promptLibraryButton" title="提示词库" type="button" aria-label="提示词库">✦</button>
-          <button class="icon-button" id="historyButton" title="历史记录" type="button" aria-label="历史记录">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0 0h5M3 8V3m9 4v5l3 2"/></svg>
-          </button>
           <button class="icon-button" id="settingsButton" title="模型设置" type="button" aria-label="模型设置">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 9 19.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.64 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15 4.64a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg>
           </button>
@@ -102,35 +96,38 @@
         <div class="attachment-list" id="attachmentList" hidden></div>
         <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,text/plain,text/markdown,text/csv,application/json,text/html" multiple hidden />
         <form class="composer" id="composerForm">
-          <textarea id="promptInput" rows="1" maxlength="12000" placeholder="问任何问题，@ 模型，/ 提示…"></textarea>
+          <textarea id="promptInput" rows="1" maxlength="12000" placeholder="问任何问题，可粘贴图片，@ 模型，/ 提示…"></textarea>
           <div class="composer-toolbar">
             <div class="composer-tools">
-              <button class="model-switch" id="modelButton" type="button" title="切换模型配置">
-                <i></i><span id="modelName">未配置模型</span><b>⌄</b>
+              <button class="composer-icon-button new-chat-action" id="newChatActionButton" data-tooltip="新聊天：清空当前内容并开始新会话" type="button" aria-label="新聊天">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
-              <button class="composer-icon-button" id="fileUploadButton" type="button" title="上传图片或文本附件" aria-label="上传附件">
-                <svg viewBox="0 0 24 24"><path d="m8 12 5-5a4 4 0 0 1 6 6l-7 7a6 6 0 0 1-8-8l7-7"/></svg>
+              <button class="composer-icon-button" id="historyButton" data-tooltip="聊天历史：查找、改名和导出会话" type="button" aria-label="聊天历史">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0 0h5M3 8V3m9 4v5l3 2"/></svg>
               </button>
-              <button class="composer-icon-button" id="captureButton" type="button" title="截取当前页面并让模型看图" aria-label="截取当前页面">
-                <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m8 15 2.5-3 2 2 2.5-3 3 4M9 5l1-2h4l1 2"/></svg>
-              </button>
-              <button class="composer-icon-button" id="readPageButton" type="button" title="读取此页并加入下一条消息" aria-label="阅读此页">
+              <button class="reasoning-button" id="reasoningButton" type="button" data-tooltip="思考模式：切换模型的分析强度">◉ <span>思考关</span></button>
+              <button class="composer-icon-button" id="readPageButton" type="button" data-tooltip="阅读此页：刷新网页正文并加入下一条消息" aria-label="阅读此页">
                 <svg viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H11v17H7.5A3.5 3.5 0 0 0 4 22V5.5ZM20 5.5A3.5 3.5 0 0 0 16.5 2H13v17h3.5A3.5 3.5 0 0 1 20 22V5.5Z"/></svg>
               </button>
-              <button class="composer-icon-button" id="focusModeButton" type="button" title="专注阅读" aria-label="专注阅读">
-                <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+              <button class="model-switch" id="modelButton" type="button" data-tooltip="切换模型：选择已保存的 API 配置">
+                <i></i><span id="modelName">未配置模型</span><b>⌄</b>
               </button>
-              <button class="composer-icon-button" id="importChatGPTButton" type="button" title="同步 ChatGPT 最新回答" aria-label="同步 ChatGPT 回答" hidden>
+              <button class="composer-icon-button" id="fileUploadButton" type="button" data-tooltip="上传附件：添加图片或文本文件" aria-label="上传附件">
+                <svg viewBox="0 0 24 24"><path d="m8 12 5-5a4 4 0 0 1 6 6l-7 7a6 6 0 0 1-8-8l7-7"/></svg>
+              </button>
+              <button class="composer-icon-button" id="captureButton" type="button" data-tooltip="页面截图：截取当前可见区域并交给视觉模型" aria-label="截取当前页面">
+                <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m8 15 2.5-3 2 2 2.5-3 3 4M9 5l1-2h4l1 2"/></svg>
+              </button>
+              <button class="composer-icon-button" id="importChatGPTButton" type="button" data-tooltip="同步回答：读取 ChatGPT 页面上最新的可见回答" aria-label="同步 ChatGPT 回答" hidden>
                 <svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M6.1 9A7 7 0 0 1 18.8 7.6L20 11M4 13l1.2 3.4A7 7 0 0 0 17.9 15"/></svg>
               </button>
-              <select class="mode-select" id="connectionModeSelect" aria-label="模型连接方式" title="选择模型连接方式">
-                <option value="api">API</option>
-                <option value="chatgpt_web">ChatGPT 网页</option>
-              </select>
             </div>
             <div class="composer-actions">
-              <button class="reasoning-button" id="reasoningButton" type="button" title="切换思考强度">◉ <span>思考关</span></button>
-              <button class="send-button" id="sendButton" type="submit" disabled aria-label="发送">
+              <select class="mode-select" id="connectionModeSelect" aria-label="模型连接方式" data-tooltip="连接方式：在 API 与 ChatGPT 网页交接之间切换">
+                <option value="api">API</option>
+                <option value="chatgpt_web">网页</option>
+              </select>
+              <button class="send-button" id="sendButton" type="submit" disabled aria-label="发送" data-tooltip="发送消息：Enter 发送，Shift + Enter 换行">
                 <svg viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
               </button>
             </div>
@@ -146,7 +143,12 @@
         </div>
         <div class="history-search"><span>⌕</span><input id="historySearchInput" type="search" placeholder="搜索当前空间的聊天" /></div>
         <div class="history-list" id="historyList"></div>
-        <button class="clear-history-button" id="clearHistoryButton" type="button">清空历史记录</button>
+        <input id="importHistoryInput" type="file" accept=".md,text/markdown,text/plain" hidden />
+        <div class="history-footer">
+          <button class="history-action-button import-history-button" id="importHistoryButton" type="button">导入记录</button>
+          <button class="history-action-button export-history-button" id="exportHistoryButton" type="button">导出当前空间</button>
+          <button class="history-action-button clear-history-button" id="clearHistoryButton" type="button">清空历史</button>
+        </div>
       </aside>
       <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
 
@@ -184,10 +186,12 @@
         </form>
       </dialog>
 
+      <div class="control-tooltip" id="controlTooltip" role="tooltip" hidden></div>
       <div class="toast" id="toast" role="status" hidden></div>
     </div>
     <script src="template-variables.js"></script>
     <script src="prompt-library.js"></script>
+    <script src="history-transfer.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

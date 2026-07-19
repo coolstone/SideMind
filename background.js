@@ -8,7 +8,8 @@ const DEFAULT_SETTINGS = {
   maxOutputTokens: 1800,
   activeProfileId: "default",
   modelProfiles: [],
-  language: "zh-CN"
+  language: "zh-CN",
+  startupBehavior: "restore_last"
 };
 
 const MENU_ITEMS = [
@@ -20,10 +21,15 @@ const MENU_ITEMS = [
   ["summarize-page", "总结当前网页"]
 ];
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   const { settings } = await chrome.storage.local.get("settings");
   if (!settings) {
     await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
+  }
+
+  if (details?.reason === "install") {
+    await chrome.storage.local.set({ backupReminderPending: true });
+    chrome.runtime.openOptionsPage().catch(() => {});
   }
 
   await chrome.contextMenus.removeAll();
@@ -211,8 +217,13 @@ async function captureCurrentTab(windowId) {
 async function readPageContext(tabId) {
   if (!Number.isInteger(tabId)) throw new Error("未找到可读取的标签页");
   const tab = await chrome.tabs.get(tabId);
-  if (!/^https?:\/\//i.test(tab.url || "")) {
+  const pageUrl = tab.url || "";
+  const localFile = /^file:\/\//i.test(pageUrl);
+  if (!/^(https?|file):\/\//i.test(pageUrl)) {
     throw new Error("浏览器内置页、扩展页和商店页面不允许读取正文");
+  }
+  if (localFile && !(await isFileSchemeAccessAllowed())) {
+    throw new Error("要读取本地文件，请在 chrome://extensions 的 SideMind 详情中开启“允许访问文件网址”，然后重试");
   }
 
   try {
@@ -222,7 +233,14 @@ async function readPageContext(tabId) {
     // 扩展刚安装或重新加载时，已打开的旧标签页还没有当前版本的内容脚本。
   }
 
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+  } catch (error) {
+    if (localFile) {
+      throw new Error("本地文件读取权限尚未生效，请开启“允许访问文件网址”后刷新此文件页");
+    }
+    throw error;
+  }
   try {
     await chrome.scripting.insertCSS({ target: { tabId }, files: ["content.css"] });
   } catch {
@@ -231,6 +249,13 @@ async function readPageContext(tabId) {
   const response = await chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_CONTEXT" });
   if (!response?.context) throw new Error("页面内容脚本已加载，但没有返回正文");
   return response.context;
+}
+
+function isFileSchemeAccessAllowed() {
+  return new Promise((resolve) => {
+    if (!chrome.extension?.isAllowedFileSchemeAccess) return resolve(true);
+    chrome.extension.isAllowedFileSchemeAccess((allowed) => resolve(Boolean(allowed)));
+  });
 }
 
 async function sendTabMessageWithBridge(tabId, message) {
@@ -449,11 +474,18 @@ function extractChatText(data) {
 }
 
 function readableError(error) {
+  const message = error?.message || "";
   if (error?.name === "AbortError") {
     return "模型请求超过 5 分钟仍未完成，已停止等待；可降低输出 Token 或关闭深度思考后重试";
+  }
+  if (/<all_urls>|activeTab/i.test(message)) {
+    return "页面截图权限尚未生效。请到 chrome://extensions 重新加载 SideMind，刷新当前网页后再试";
+  }
+  if (/unknown variant [`']?image_url|expected [`']?text/i.test(message)) {
+    return "当前模型接口只支持文本，不能直接接收图片。请切换到支持视觉输入的模型，或改用 ChatGPT 网页交接模式";
   }
   if (error instanceof TypeError && /fetch/i.test(error.message)) {
     return "无法连接模型服务，请检查 Base URL、网络或接口的 CORS 设置";
   }
-  return error?.message || "未知错误";
+  return message || "未知错误";
 }

@@ -47,6 +47,15 @@
             </select>
             <small>普通聊天会优先使用此语言；提示词中的 <code>${lang}</code> 也会自动替换为该值。</small>
           </label>
+
+          <label>
+            <span>打开侧边栏时</span>
+            <select id="startupBehavior" name="startupBehavior">
+              <option value="restore_last">恢复上次打开的会话</option>
+              <option value="new_chat">始终打开新会话</option>
+            </select>
+            <small>恢复模式会同时切换到会话所属空间；打开聊天历史时，自动高亮并定位当前会话。</small>
+          </label>
         </section>
 
         <section class="settings-card api-only">
@@ -131,6 +140,35 @@
               <small id="tokenHint">上限取决于所选模型；日常网页总结建议使用 4,000—16,000。</small>
             </label>
           </div>
+        </section>
+
+        <section class="settings-card backup-card">
+          <div class="section-heading">
+            <span class="step">04</span>
+            <div><h2>本地数据与备份</h2><p>换目录、重装或扩展 ID 变化后，可从本地文件恢复配置和运行数据。</p></div>
+          </div>
+
+          <div class="backup-install-notice" id="backupInstallNotice" hidden>
+            <div><strong>首次安装建议</strong><p>先恢复已有备份，或完成配置后导出一份本地备份。普通更新不会清空数据，但加载另一个解压目录可能产生新的扩展身份。</p></div>
+            <button id="dismissBackupNoticeButton" type="button">知道了</button>
+          </div>
+
+          <div class="backup-summary">
+            <strong>备份内容</strong>
+            <p>模型配置、响应语言、启动偏好、提示词、聊天空间、聊天历史和本地工件。备份文件只保存在你选择的本地目录，不会上传。</p>
+          </div>
+
+          <label class="backup-secret-option">
+            <input id="includeApiKeysInBackup" type="checkbox" />
+            <span><strong>在备份中包含 API Key</strong><small>默认关闭。开启后 API Key 会以明文写入本地 JSON，请妥善保管文件。</small></span>
+          </label>
+
+          <input id="backupFileInput" type="file" accept=".json,application/json" hidden />
+          <div class="backup-actions">
+            <button id="importBackupButton" type="button">恢复本地备份</button>
+            <button id="exportBackupButton" type="button">导出本地备份</button>
+          </div>
+          <p class="backup-status" id="backupStatus" aria-live="polite"></p>
         </section>
 
         <section class="security-note" id="securityNote">
