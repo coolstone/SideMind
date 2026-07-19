@@ -92,7 +92,7 @@ const state = {
 };
 
 const ui = Object.fromEntries([
-  "newChatButton", "newChatActionButton", "historyButton", "settingsButton", "promptLibraryButton", "spaceButton", "spaceName", "pageTitle", "siteDot",
+  "newChatButton", "newChatActionButton", "historyButton", "settingsButton", "donationButton", "promptLibraryButton", "spaceButton", "spaceName", "pageTitle", "siteDot",
   "contextToggle", "refreshContextButton", "welcomeState", "chatState",
   "messageList", "thinkingRow", "actionGrid", "quickActions", "promptOverflowButton",
   "importChatGPTButton", "attachmentList", "fileInput", "fileUploadButton", "composerForm",
@@ -101,7 +101,8 @@ const ui = Object.fromEntries([
   "modelPopover", "modelProfileList", "manageModelsButton", "promptPopover", "promptSearchInput", "promptList", "managePromptsButton",
   "spacePopover", "spaceList", "newSpaceButton", "contentArea",
   "templateVariableDialog", "templateVariableForm", "templateVariableTitle", "templateVariableSummary", "templateVariableFields", "closeTemplateVariableButton", "cancelTemplateVariableButton",
-  "selectionPreview", "selectionPreviewText", "clearSelectionButton", "controlTooltip"
+  "selectionPreview", "selectionPreviewText", "clearSelectionButton", "controlTooltip",
+  "donationDialog", "closeDonationButton", "wechatDonationTab", "alipayDonationTab", "wechatDonationPanel", "alipayDonationPanel"
 ].map((id) => [id, document.getElementById(id)]));
 
 init();
@@ -119,6 +120,12 @@ function bindEvents() {
   ui.newChatButton.addEventListener("click", () => startNewChat());
   ui.newChatActionButton.addEventListener("click", () => startNewChat());
   ui.settingsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
+  ui.donationButton.addEventListener("click", openDonationDialog);
+  ui.closeDonationButton.addEventListener("click", closeDonationDialog);
+  ui.donationDialog.addEventListener("click", (event) => { if (event.target === ui.donationDialog) closeDonationDialog(); });
+  ui.donationDialog.querySelectorAll("[data-donation-method]").forEach((button) => {
+    button.addEventListener("click", () => setDonationMethod(button.dataset.donationMethod));
+  });
   ui.promptLibraryButton.addEventListener("click", () => togglePopover("prompt"));
   ui.promptOverflowButton.addEventListener("click", () => togglePopover("prompt"));
   ui.spaceButton.addEventListener("click", () => togglePopover("space"));
@@ -1516,6 +1523,26 @@ function closePopovers() {
   ui.modelPopover.hidden = true;
   ui.promptPopover.hidden = true;
   ui.spacePopover.hidden = true;
+}
+
+function openDonationDialog() {
+  closePopovers();
+  setDonationMethod("wechat");
+  if (!ui.donationDialog.open) ui.donationDialog.showModal();
+}
+
+function closeDonationDialog() {
+  if (ui.donationDialog.open) ui.donationDialog.close();
+}
+
+function setDonationMethod(method) {
+  const useAlipay = method === "alipay";
+  ui.wechatDonationTab.classList.toggle("is-active", !useAlipay);
+  ui.alipayDonationTab.classList.toggle("is-active", useAlipay);
+  ui.wechatDonationTab.setAttribute("aria-selected", String(!useAlipay));
+  ui.alipayDonationTab.setAttribute("aria-selected", String(useAlipay));
+  ui.wechatDonationPanel.hidden = useAlipay;
+  ui.alipayDonationPanel.hidden = !useAlipay;
 }
 
 function handleGlobalClick(event) {

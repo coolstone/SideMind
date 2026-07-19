@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SideMind AI</title>
-    <link rel="stylesheet" href="sidepanel.css?v=8" />
+    <link rel="stylesheet" href="sidepanel.css?v=9" />
   </head>
   <body>
     <div class="app-shell">
@@ -18,6 +18,9 @@
           <span id="spaceName">默认空间</span><span>⌄</span>
         </button>
         <div class="header-actions">
+          <button class="icon-button donation-button" id="donationButton" title="支持 SideMind" type="button" aria-label="支持 SideMind">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"/></svg>
+          </button>
           <button class="icon-button" id="promptLibraryButton" title="提示词库" type="button" aria-label="提示词库">✦</button>
           <button class="icon-button" id="settingsButton" title="模型设置" type="button" aria-label="模型设置">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 9 19.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.64 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15 4.64a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg>
@@ -184,6 +187,29 @@
             <button class="primary-dialog-button" type="submit">应用并运行</button>
           </div>
         </form>
+      </dialog>
+
+      <dialog class="donation-dialog" id="donationDialog" aria-labelledby="donationDialogTitle">
+        <div class="donation-dialog-shell">
+          <div class="donation-dialog-heading">
+            <div><p class="eyebrow">SUPPORT SIDEMIND</p><h2 id="donationDialogTitle">支持 SideMind</h2></div>
+            <button id="closeDonationButton" type="button" aria-label="关闭捐赠窗口">×</button>
+          </div>
+          <p class="donation-intro">如果 SideMind 帮你节省了时间，可以自愿请开发者喝杯咖啡。功能始终不因是否捐赠而受限。</p>
+          <div class="donation-tabs" role="tablist" aria-label="选择捐赠方式">
+            <button class="is-active" id="wechatDonationTab" type="button" role="tab" aria-selected="true" data-donation-method="wechat">微信支付</button>
+            <button id="alipayDonationTab" type="button" role="tab" aria-selected="false" data-donation-method="alipay">支付宝</button>
+          </div>
+          <div class="donation-panel" id="wechatDonationPanel" role="tabpanel" aria-labelledby="wechatDonationTab">
+            <img src="assets/donate-wechat.jpg" alt="SideMind 微信支付捐赠二维码" loading="lazy" decoding="async" />
+            <strong>推荐使用微信支付</strong>
+          </div>
+          <div class="donation-panel" id="alipayDonationPanel" role="tabpanel" aria-labelledby="alipayDonationTab" hidden>
+            <img src="assets/donate-alipay.jpg" alt="SideMind 支付宝捐赠二维码" loading="lazy" decoding="async" />
+            <strong>打开支付宝扫一扫</strong>
+          </div>
+          <p class="donation-note">二维码图片仅保存在扩展本地，不会上传或收集支付信息。</p>
+        </div>
       </dialog>
 
       <div class="control-tooltip" id="controlTooltip" role="tooltip" hidden></div>

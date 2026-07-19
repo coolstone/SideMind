@@ -94,7 +94,7 @@ assert.equal(bridgeSendCount, 2, "a missing old content script should be retried
 assert.equal(bridgeInjectionCount, 1, "the current content script should be injected before retrying");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert.equal(manifest.version, "0.5.15");
+assert.equal(manifest.version, "0.5.16");
 assert.ok(manifest.permissions.includes("scripting"));
 assert.ok(manifest.host_permissions.includes("<all_urls>"));
 assert.ok(manifest.content_scripts[0].matches.includes("file:///*"));
@@ -105,6 +105,8 @@ for (const size of [16, 32, 48, 128]) {
 }
 assert.ok(fs.existsSync(path.join(root, "assets/logo-wordmark.svg")));
 assert.ok(fs.existsSync(path.join(root, "assets/logo-wordmark.png")));
+assert.ok(fs.existsSync(path.join(root, "assets/donate-wechat.jpg")));
+assert.ok(fs.existsSync(path.join(root, "assets/donate-alipay.jpg")));
 const usageGuide = fs.readFileSync(path.join(root, "SideMind-使用与扩展指南.md"), "utf8");
 assert.match(usageGuide, /使用压缩包安装到 Chrome/);
 assert.match(usageGuide, /为什么做 SideMind/);
@@ -150,6 +152,8 @@ assert.match(sidepanelSource, /conversationImportKey/);
 assert.match(sidepanelSource, /SideMind-聊天历史-/);
 assert.match(sidepanelSource, /附件文件本身未保存在聊天历史中/);
 assert.match(sidepanelSource, /function bindControlTooltips/);
+assert.match(sidepanelSource, /function openDonationDialog/);
+assert.match(sidepanelSource, /function setDonationMethod/);
 assert.match(sidepanelSource, /function showControlTooltip/);
 assert.match(sidepanelSource, /aria-describedby/);
 assert.match(sidepanelSource, /controlTooltipTimer/);
@@ -305,6 +309,10 @@ assert.match(sidepanelHtml, /id="importHistoryButton"/);
 assert.match(sidepanelHtml, /id="importHistoryInput"/);
 assert.match(sidepanelHtml, /导出当前空间/);
 assert.match(sidepanelHtml, /id="controlTooltip" role="tooltip"/);
+assert.match(sidepanelHtml, /id="donationButton"/);
+assert.match(sidepanelHtml, /id="donationDialog"/);
+assert.match(sidepanelHtml, /assets\/donate-wechat\.jpg/);
+assert.match(sidepanelHtml, /assets\/donate-alipay\.jpg/);
 assert.match(sidepanelHtml, /data-tooltip="新聊天：清空当前内容并开始新会话"/);
 assert.match(sidepanelHtml, /data-tooltip="发送消息：Enter 发送，Shift \+ Enter 换行"/);
 assert.ok(sidepanelHtml.indexOf("composer-toolbar") < sidepanelHtml.indexOf('id="newChatActionButton"'));
