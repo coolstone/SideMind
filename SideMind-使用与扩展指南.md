@@ -149,7 +149,7 @@ DeepSeek V4 官方 API 当前只支持文本输入，不能直接理解图片。
 
 6. 按 Enter 或点击发送按钮。
 
-`Shift + Enter` 用于输入换行。回答生成期间不要切换会话或新建聊天。
+`Shift + Enter` 用于输入换行。回答生成期间，右下角发送箭头会变为停止方块；点击即可强制中止当前模型请求。停止后问题仍保留在本地聊天记录中，可以修改后再次发送。
 
 ### 常用入口
 
@@ -162,6 +162,7 @@ DeepSeek V4 官方 API 当前只支持文本输入，不能直接理解图片。
 - **读取页面截图**：点击输入框工具栏的截图按钮，截取当前标签页的可见区域。首次升级到 v0.5.12 后需在扩展管理页重新加载扩展。
 - **重新读取页面**：点击书本按钮或当前网页卡片的刷新按钮。
 - **深度分析**：点击“思考”，在关闭、高、最大之间切换。
+- **停止生成**：API 请求进行中，点击输入框右下角的停止方块，立即取消当前网络请求。
 - **开始新聊天**：点击输入框左下角的 `+`。
 - **查看历史**：点击 `+` 旁边的历史图标。
 
@@ -183,6 +184,7 @@ DeepSeek V4 官方 API 当前只支持文本输入，不能直接理解图片。
 - 同一服务商的模型集中显示并共享连接配置；默认提供 DeepSeek V4 Flash 与 V4 Pro 两个模型档案。
 - 支持 OpenAI Responses API。
 - 支持 DeepSeek、OpenRouter 和自定义 OpenAI 兼容 Chat Completions 接口。
+- 支持 Ollama 本地服务；Base URL 填写到 `http://主机:11434` 即可，SideMind 会自动请求 `/v1/chat/completions`，API Key 可留空。
 - 侧栏底部可直接切换模型，弹出的列表按服务商分组。
 - ChatGPT 网页交接模式不读取 Cookie、不调用私有接口，提示词填入后由用户确认发送。
 
@@ -390,6 +392,18 @@ node tests/regression.mjs
 ### DeepSeek 无法分析图片
 
 DeepSeek V4 官方 API 当前为纯文本输入。请切换到支持视觉的模型或 ChatGPT 网页模式。
+
+### Ollama 测试连接返回 HTTP 403
+
+这通常不是模型或 API Key 错误，而是 Ollama 拒绝了浏览器扩展的 `chrome-extension://` 请求来源。SideMind 已经会把裸地址（例如 `http://192.168.110.4:11434`）自动转换为正确的 `/v1/chat/completions`，仍需在 Ollama 服务端放行来源：
+
+1. 在 `chrome://extensions/` 找到 SideMind，复制扩展 ID。
+2. 在运行 Ollama 的电脑上设置 `OLLAMA_ORIGINS`，然后完全重启 Ollama。
+3. 个人开发环境可使用 `OLLAMA_ORIGINS=chrome-extension://*`；希望限制更严时，只填写 `chrome-extension://你的扩展ID`。
+4. 如果 SideMind 与 Ollama 不在同一台电脑，还需让 Ollama 监听局域网地址，例如配置 `OLLAMA_HOST=0.0.0.0:11434`，并确认系统防火墙只允许可信局域网访问。
+5. 在 SideMind 设置中选择“服务商 → Ollama（本地模型）”，Base URL 填 `http://192.168.110.4:11434`，API Key 留空，模型 ID 填写 `gemma4:31b`，再点击“保存并测试连接”。
+
+macOS Ollama 应用的环境变量可以通过 `launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"` 设置，之后需要从菜单栏完全退出并重新打开 Ollama。使用 systemd、Docker 或其他启动方式时，应把同名环境变量写入对应服务配置并重启容器或服务。不要把未鉴权的 Ollama 端口直接暴露到公网。
 
 ### “写入网页输入框”失败
 

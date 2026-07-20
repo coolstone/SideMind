@@ -12,6 +12,8 @@ const DEFAULT_SETTINGS = {
   startupBehavior: "restore_last"
 };
 
+const activeModelRequests = new Map();
+
 const MENU_ITEMS = [
   ["ask-selection", "用 SideMind 提问：“%s”"],
   ["summarize-selection", "总结选中内容"],
@@ -93,10 +95,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: "拒绝了非扩展页面发起的模型请求" });
       return false;
     }
-    callModel(message.payload)
+    callModel(message.payload, message.requestId)
       .then((result) => sendResponse({ ok: true, result }))
-      .catch((error) => sendResponse({ ok: false, error: readableError(error) }));
+      .catch((error) => sendResponse({ ok: false, error: readableError(error), cancelled: error?.code === "USER_CANCELLED" }));
     return true;
+  }
+
+  if (message?.type === "CANCEL_AI_REQUEST") {
+    if (!isTrustedExtensionSender(sender)) {
+      sendResponse({ ok: false, error: "拒绝了非扩展页面发起的停止请求" });
+      return false;
+    }
+    const request = activeModelRequests.get(String(message.requestId || ""));
+    if (!request) {
+      sendResponse({ ok: true, cancelled: false });
+      return false;
+    }
+    request.userCancelled = true;
+    request.controller.abort();
+    sendResponse({ ok: true, cancelled: true });
+    return false;
   }
 
   if (message?.type === "CAPTURE_TAB") {
@@ -342,27 +360,35 @@ async function importChatGPTResponse(text, panelPromise) {
   return { panelOpened: panelResult.status === "fulfilled" };
 }
 
-async function callModel(payload) {
-  const { settings: stored = {} } = await chrome.storage.local.get("settings");
-  const settings = resolveModelSettings(stored);
-  if (!settings.apiKey) throw new Error("请先在设置中填写 API Key");
-
-  const mode = settings.apiMode === "chat" ? "chat" : "responses";
-  const endpoint = buildEndpoint(settings.baseUrl, mode);
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${settings.apiKey}`
-  };
-
-  const body = mode === "responses"
-    ? buildResponsesBody(settings, payload)
-    : buildChatBody(settings, payload);
-
+async function callModel(payload, requestedId) {
   const controller = new AbortController();
+  const requestId = String(requestedId || crypto.randomUUID());
+  const requestState = { controller, userCancelled: false };
+  activeModelRequests.set(requestId, requestState);
   const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+  let provider = "";
+  let mode = "responses";
   let response;
   let rawText;
   try {
+    const { settings: stored = {} } = await chrome.storage.local.get("settings");
+    const settings = resolveModelSettings(stored);
+    provider = String(settings.provider || "").toLowerCase();
+    if (requestState.userCancelled) {
+      const cancelledError = new Error("模型请求已由用户停止");
+      cancelledError.code = "USER_CANCELLED";
+      throw cancelledError;
+    }
+    if (!settings.apiKey && provider !== "ollama") throw new Error("请先在设置中填写 API Key");
+
+    mode = settings.apiMode === "chat" ? "chat" : "responses";
+    const endpoint = buildEndpoint(settings.baseUrl, mode, provider);
+    const headers = { "Content-Type": "application/json" };
+    if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
+    const body = mode === "responses"
+      ? buildResponsesBody(settings, payload)
+      : buildChatBody(settings, payload);
+
     response = await fetch(endpoint, {
       method: "POST",
       headers,
@@ -370,15 +396,33 @@ async function callModel(payload) {
       signal: controller.signal
     });
     rawText = await response.text();
+  } catch (error) {
+    if (requestState.userCancelled && error?.code !== "USER_CANCELLED") {
+      const cancelledError = new Error("模型请求已由用户停止");
+      cancelledError.code = "USER_CANCELLED";
+      throw cancelledError;
+    }
+    if (provider === "ollama" && error instanceof TypeError) {
+      throw new Error("无法从浏览器扩展连接 Ollama。请确认服务可被局域网访问，并设置 OLLAMA_ORIGINS=chrome-extension://* 后重启 Ollama");
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
+    if (activeModelRequests.get(requestId) === requestState) activeModelRequests.delete(requestId);
   }
 
   let data;
   try {
     data = JSON.parse(rawText);
   } catch {
+    if (provider === "ollama" && response.status === 403) {
+      throw new Error("Ollama 拒绝了浏览器扩展来源（HTTP 403）。请在 Ollama 服务端设置 OLLAMA_ORIGINS=chrome-extension://* 并重启服务；SideMind 会自动使用 /v1/chat/completions");
+    }
     throw new Error(`模型服务返回了非 JSON 内容（HTTP ${response.status}）`);
+  }
+
+  if (provider === "ollama" && response.status === 403) {
+    throw new Error("Ollama 拒绝了浏览器扩展来源（HTTP 403）。请在 Ollama 服务端设置 OLLAMA_ORIGINS=chrome-extension://* 并重启服务；SideMind 会自动使用 /v1/chat/completions");
   }
 
   if (!response.ok) {
@@ -397,9 +441,10 @@ function resolveModelSettings(stored) {
   return active ? { ...merged, ...active, connectionMode: stored.connectionMode || merged.connectionMode } : merged;
 }
 
-function buildEndpoint(baseUrl, mode) {
+function buildEndpoint(baseUrl, mode, provider = "") {
   const clean = String(baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
   if (/\/(responses|chat\/completions)$/.test(clean)) return clean;
+  if (provider === "ollama" && !/\/v1$/.test(clean)) return `${clean}/v1/chat/completions`;
   return mode === "responses" ? `${clean}/responses` : `${clean}/chat/completions`;
 }
 
@@ -475,6 +520,7 @@ function extractChatText(data) {
 
 function readableError(error) {
   const message = error?.message || "";
+  if (error?.code === "USER_CANCELLED") return "已停止生成";
   if (error?.name === "AbortError") {
     return "模型请求超过 5 分钟仍未完成，已停止等待；可降低输出 Token 或关闭深度思考后重试";
   }

@@ -30,6 +30,22 @@ const chrome = {
   scripting: {
     async executeScript() { bridgeInjectionCount += 1; },
     async insertCSS() {}
+  },
+  storage: {
+    local: {
+      async get() {
+        return {
+          settings: {
+            provider: "ollama",
+            apiMode: "chat",
+            baseUrl: "http://127.0.0.1:11434",
+            model: "local-test",
+            apiKey: "",
+            maxOutputTokens: 100
+          }
+        };
+      }
+    }
   }
 };
 
@@ -38,6 +54,14 @@ const context = vm.createContext({
   URL,
   AbortController,
   Blob,
+  crypto: { randomUUID: () => "generated-request-id" },
+  fetch: (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener("abort", () => {
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      reject(error);
+    }, { once: true });
+  }),
   console,
   setTimeout,
   clearTimeout
@@ -81,6 +105,32 @@ assert.match(visionSchemaError, /当前模型接口只支持文本/);
 const capturePermissionError = evaluate(`readableError(new Error("Either the '<all_urls>' or 'activeTab' permission is required."))`);
 assert.match(capturePermissionError, /页面截图权限尚未生效/);
 
+const userCancelledError = evaluate(`(() => {
+  const error = new Error("模型请求已由用户停止");
+  error.code = "USER_CANCELLED";
+  return readableError(error);
+})()`);
+assert.equal(userCancelledError, "已停止生成");
+
+assert.equal(evaluate(`buildEndpoint("http://192.168.110.4:11434", "chat", "ollama")`), "http://192.168.110.4:11434/v1/chat/completions");
+assert.equal(evaluate(`buildEndpoint("http://192.168.110.4:11434/v1", "chat", "ollama")`), "http://192.168.110.4:11434/v1/chat/completions");
+assert.equal(evaluate(`buildEndpoint("https://example.test/v1", "chat", "compatible")`), "https://example.test/v1/chat/completions");
+
+const cancelledRequest = evaluate(`callModel(
+  { instructions: "system", prompt: "hello", imageDataUrls: [], reasoningEffort: "none" },
+  "cancel-test"
+).catch((error) => ({ code: error.code, readable: readableError(error) }))`);
+assert.equal(evaluate(`activeModelRequests.has("cancel-test")`), true, "request should be cancellable before settings finish loading");
+evaluate(`(() => {
+  const request = activeModelRequests.get("cancel-test");
+  request.userCancelled = true;
+  request.controller.abort();
+})()`);
+const cancelledResult = await cancelledRequest;
+assert.equal(cancelledResult.code, "USER_CANCELLED");
+assert.equal(cancelledResult.readable, "已停止生成");
+assert.equal(evaluate(`activeModelRequests.has("cancel-test")`), false);
+
 const responses = evaluate(`buildResponsesBody(
   { model: "gpt-test", maxOutputTokens: 4096 },
   { instructions: "system", prompt: "hello", reasoningEffort: "max" }
@@ -94,7 +144,7 @@ assert.equal(bridgeSendCount, 2, "a missing old content script should be retried
 assert.equal(bridgeInjectionCount, 1, "the current content script should be injected before retrying");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert.equal(manifest.version, "0.5.17");
+assert.equal(manifest.version, "0.5.18");
 assert.ok(manifest.permissions.includes("scripting"));
 assert.ok(manifest.host_permissions.includes("<all_urls>"));
 assert.ok(manifest.content_scripts[0].matches.includes("file:///*"));
@@ -123,6 +173,11 @@ assert.match(backgroundSource, /function isFileSchemeAccessAllowed/);
 assert.match(backgroundSource, /允许访问文件网址/);
 assert.match(backgroundSource, /backupReminderPending/);
 assert.match(backgroundSource, /chrome\.runtime\.openOptionsPage/);
+assert.match(backgroundSource, /activeModelRequests/);
+assert.match(backgroundSource, /CANCEL_AI_REQUEST/);
+assert.match(backgroundSource, /OLLAMA_ORIGINS=chrome-extension:\/\/\*/);
+assert.match(backgroundSource, /provider === "ollama"/);
+assert.match(backgroundSource, /\/v1\/chat\/completions/);
 assert.doesNotMatch(backgroundSource, /await chrome\.storage\.session\.set\([\s\S]{0,220}await openPanel\(tab\)/);
 
 const contentStyleSource = fs.readFileSync(path.join(root, "content.css"), "utf8");
@@ -153,6 +208,11 @@ assert.match(sidepanelSource, /SideMind-聊天历史-/);
 assert.match(sidepanelSource, /附件文件本身未保存在聊天历史中/);
 assert.match(sidepanelSource, /function bindControlTooltips/);
 assert.match(sidepanelSource, /function applyFontSize/);
+assert.match(sidepanelSource, /function beginModelRequest/);
+assert.match(sidepanelSource, /async function stopActiveRequest/);
+assert.match(sidepanelSource, /CANCEL_AI_REQUEST/);
+assert.match(sidepanelSource, /activeRequestId/);
+assert.match(sidepanelSource, /is-stop/);
 assert.match(sidepanelSource, /builtin-deepseek-pro/);
 assert.match(sidepanelSource, /model-provider-group/);
 assert.match(sidepanelSource, /function providerLabel/);
@@ -286,6 +346,8 @@ assert.match(optionsHtml, /id="fontSizeScale"/);
 assert.match(optionsHtml, /id="modelPreset"/);
 assert.match(optionsHtml, /舒适（推荐）/);
 assert.match(optionsHtml, /deepseek-v4-pro|自定义模型 ID/);
+assert.match(optionsHtml, /<option value="ollama">Ollama（本地模型）<\/option>/);
+assert.match(optionsHtml, /id="apiKeyHint"/);
 assert.match(optionsHtml, /先配置服务商/);
 assert.match(optionsHtml, /再配置模型/);
 assert.ok(optionsHtml.indexOf('id="provider"') < optionsHtml.indexOf('id="profileSelect"'));
@@ -301,6 +363,9 @@ assert.match(optionsSource, /responseLanguage/);
 assert.match(optionsSource, /startupBehavior/);
 assert.match(optionsSource, /builtin-deepseek/);
 assert.match(optionsSource, /builtin-deepseek-pro/);
+assert.match(optionsSource, /ollama/);
+assert.match(optionsSource, /function updateApiKeyRequirement/);
+assert.match(optionsSource, /OLLAMA_ORIGINS/);
 assert.match(optionsSource, /PROVIDER_MODELS/);
 assert.match(optionsSource, /function inheritProviderApiKeys/);
 assert.match(optionsSource, /function renderModelChoices/);
@@ -325,6 +390,10 @@ const migratedProfiles = modelConfigContext.__modelProfiles.mergeBuiltInProfiles
 ], 1);
 assert.equal(migratedProfiles.filter((profile) => profile.model === "deepseek-v4-flash").length, 1);
 assert.equal(migratedProfiles.find((profile) => profile.model === "deepseek-v4-pro").apiKey, "secret");
+const migratedOllama = modelConfigContext.__modelProfiles.mergeBuiltInProfiles([
+  { id: "local", name: "本地 Gemma", provider: "compatible", apiMode: "chat", baseUrl: "http://192.168.110.4:11434", apiKey: "", model: "gemma4:31b" }
+], 3);
+assert.equal(migratedOllama.find((profile) => profile.id === "local").provider, "ollama");
 const sidepanelStyle = fs.readFileSync(path.join(root, "sidepanel.css"), "utf8");
 assert.match(sidepanelStyle, /data-font-size="compact"/);
 assert.match(sidepanelStyle, /data-font-size="large"/);
@@ -351,6 +420,7 @@ assert.match(sidepanelHtml, /assets\/donate-wechat\.jpg/);
 assert.match(sidepanelHtml, /assets\/donate-alipay\.jpg/);
 assert.match(sidepanelHtml, /data-tooltip="新聊天：清空当前内容并开始新会话"/);
 assert.match(sidepanelHtml, /data-tooltip="发送消息：Enter 发送，Shift \+ Enter 换行"/);
+assert.match(sidepanelHtml, /class="stop-icon"/);
 assert.ok(sidepanelHtml.indexOf("composer-toolbar") < sidepanelHtml.indexOf('id="newChatActionButton"'));
 assert.ok(sidepanelHtml.indexOf("composer-toolbar") < sidepanelHtml.indexOf('id="historyButton"'));
 assert.ok(sidepanelHtml.indexOf('id="newChatActionButton"') < sidepanelHtml.indexOf('id="historyButton"'));

@@ -81,6 +81,7 @@
               <select id="provider" name="provider">
                 <option value="openai">OpenAI</option>
                 <option value="deepseek">DeepSeek</option>
+                <option value="ollama">Ollama（本地模型）</option>
                 <option value="openrouter">OpenRouter</option>
                 <option value="compatible">自定义 OpenAI 兼容服务</option>
               </select>
@@ -106,7 +107,7 @@
               <input id="apiKey" name="apiKey" type="password" autocomplete="off" placeholder="sk-…" required />
               <button id="toggleKeyButton" type="button">显示</button>
             </div>
-            <small>保存后应用到当前服务商下的全部模型，不需要为每个模型重复填写。</small>
+            <small id="apiKeyHint">保存后应用到当前服务商下的全部模型，不需要为每个模型重复填写。</small>
           </label>
         </section>
 

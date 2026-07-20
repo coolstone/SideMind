@@ -48,7 +48,7 @@ const DEFAULT_UI_SETTINGS = {
   modelProfileLibraryVersion: 0
 };
 
-const MODEL_PROFILE_LIBRARY_VERSION = 2;
+const MODEL_PROFILE_LIBRARY_VERSION = 3;
 const BUILT_IN_MODEL_PROFILES = [
   { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000 },
   { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 },
@@ -75,6 +75,8 @@ const state = {
   conversationTitleCustomized: false,
   busy: false,
   settings: null,
+  activeRequestId: null,
+  stopRequested: false,
   prompts: [],
   spaces: [],
   currentSpaceId: DEFAULT_SPACE.id,
@@ -179,6 +181,10 @@ function bindEvents() {
 
   ui.composerForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (state.busy) {
+      stopActiveRequest();
+      return;
+    }
     sendUserPrompt();
   });
   ui.promptInput.addEventListener("input", () => {
@@ -303,7 +309,7 @@ function ensureModelProfiles(settings) {
 }
 
 function mergeBuiltInModelProfiles(profiles, libraryVersion) {
-  const next = profiles.map((profile) => ({ ...profile }));
+  const next = profiles.map((profile) => normalizeProfileProvider(profile));
   if (Number(libraryVersion || 0) < MODEL_PROFILE_LIBRARY_VERSION) {
     for (const builtIn of BUILT_IN_MODEL_PROFILES) {
       const exists = next.some((profile) => profile.id === builtIn.id
@@ -320,6 +326,13 @@ function mergeBuiltInModelProfiles(profiles, libraryVersion) {
     : { ...profile, apiKey: savedKeys.get(providerCredentialKey(profile)) || "" });
 }
 
+function normalizeProfileProvider(profile) {
+  const baseUrl = String(profile?.baseUrl || "").toLowerCase();
+  return profile?.provider === "compatible" && /:11434(?:\/|$)/.test(baseUrl)
+    ? { ...profile, provider: "ollama", apiMode: "chat" }
+    : { ...profile };
+}
+
 function providerCredentialKey(profile) {
   return `${profile.provider || "compatible"}|${String(profile.baseUrl || "").replace(/\/+$/, "").toLowerCase()}`;
 }
@@ -331,7 +344,7 @@ function applyFontSize(value) {
 function updateModeUI() {
   const settings = state.settings || DEFAULT_UI_SETTINGS;
   const webMode = settings.connectionMode === "chatgpt_web";
-  const ready = webMode || Boolean(settings.apiKey && settings.model);
+  const ready = webMode || Boolean(settings.model && (settings.apiKey || settings.provider === "ollama"));
   ui.connectionModeSelect.value = webMode ? "chatgpt_web" : "api";
   ui.modelButton.classList.toggle("is-ready", ready);
   ui.modelName.textContent = webMode ? "ChatGPT 网页" : activeProfileName(settings);
@@ -481,6 +494,7 @@ async function performRequest({ displayText, taskPrompt }) {
   }
 
   state.busy = true;
+  const requestId = beginModelRequest();
   showChat();
   addMessage("user", displayText, false, {
     taskPrompt,
@@ -496,8 +510,14 @@ async function performRequest({ displayText, taskPrompt }) {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "AI_REQUEST",
+      requestId,
       payload: { instructions: currentSystemInstructions(), prompt, imageDataUrls, reasoningEffort: state.reasoningEffort }
     });
+    if (response?.cancelled || state.stopRequested) {
+      await saveConversation();
+      showToast("已停止生成");
+      return;
+    }
     if (!response?.ok) throw new Error(response?.error || "模型请求失败");
     addMessage("assistant", response.result.text, false, {
       modelName: currentModelName(),
@@ -506,9 +526,14 @@ async function performRequest({ displayText, taskPrompt }) {
     clearAttachments();
     await saveConversation();
   } catch (error) {
-    addMessage("assistant", `请求没有完成：${error.message}`);
-    showToast(error.message);
+    if (state.stopRequested || error.message === "已停止生成") {
+      showToast("已停止生成");
+    } else {
+      addMessage("assistant", `请求没有完成：${error.message}`);
+      showToast(error.message);
+    }
   } finally {
+    finishModelRequest(requestId);
     state.busy = false;
     setThinking(false);
     updateComposerState();
@@ -966,6 +991,7 @@ async function regenerateAssistantMessage(message) {
   if (!ensureModelConfigured()) return;
 
   state.busy = true;
+  const requestId = beginModelRequest();
   setThinking(true);
   updateComposerState();
   const previousMessages = state.messages.slice(0, userIndex).slice(-8);
@@ -974,8 +1000,10 @@ async function regenerateAssistantMessage(message) {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "AI_REQUEST",
+      requestId,
       payload: { instructions: currentSystemInstructions(), prompt, imageDataUrls: [], reasoningEffort: state.reasoningEffort }
     });
+    if (response?.cancelled || state.stopRequested) return showToast("已停止生成");
     if (!response?.ok) throw new Error(response?.error || "重新生成失败");
     message.content = response.result.text;
     message.createdAt = Date.now();
@@ -986,8 +1014,9 @@ async function regenerateAssistantMessage(message) {
     await saveConversation();
     showToast("已重新生成回答");
   } catch (error) {
-    showToast(error.message);
+    showToast(state.stopRequested || error.message === "已停止生成" ? "已停止生成" : error.message);
   } finally {
+    finishModelRequest(requestId);
     state.busy = false;
     setThinking(false);
     updateComposerState();
@@ -1574,7 +1603,7 @@ function renderModelProfiles() {
   ui.modelProfileList.replaceChildren();
   const profiles = state.settings?.modelProfiles || [];
   if (!profiles.length) return renderPopoverEmpty(ui.modelProfileList, "还没有模型配置，请先打开设置页添加。");
-  const providerOrder = ["openai", "deepseek", "openrouter", "compatible"];
+  const providerOrder = ["openai", "deepseek", "ollama", "openrouter", "compatible"];
   const providers = [...new Set(profiles.map((profile) => profile.provider || "compatible"))]
     .sort((a, b) => (providerOrder.indexOf(a) < 0 ? 99 : providerOrder.indexOf(a)) - (providerOrder.indexOf(b) < 0 ? 99 : providerOrder.indexOf(b)));
   for (const provider of providers) {
@@ -1609,11 +1638,11 @@ async function switchModelProfile(profileId) {
 }
 
 function providerIcon(provider) {
-  return ({ openai: "O", deepseek: "D", openrouter: "R", compatible: "C" })[provider] || "AI";
+  return ({ openai: "O", deepseek: "D", ollama: "L", openrouter: "R", compatible: "C" })[provider] || "AI";
 }
 
 function providerLabel(provider) {
-  return ({ openai: "OpenAI", deepseek: "DeepSeek", openrouter: "OpenRouter", compatible: "自定义兼容服务" })[provider] || provider;
+  return ({ openai: "OpenAI", deepseek: "DeepSeek", ollama: "Ollama 本地", openrouter: "OpenRouter", compatible: "自定义兼容服务" })[provider] || provider;
 }
 
 function renderPromptList() {
@@ -1880,8 +1909,8 @@ function setThinking(active) {
 
 function ensureModelConfigured() {
   if (state.settings?.connectionMode === "chatgpt_web") return true;
-  if (state.settings?.apiKey && state.settings?.model) return true;
-  showToast("请先配置模型与 API Key");
+  if (state.settings?.model && (state.settings?.apiKey || state.settings?.provider === "ollama")) return true;
+  showToast(state.settings?.provider === "ollama" ? "请先配置 Ollama 模型" : "请先配置模型与 API Key");
   chrome.runtime.openOptionsPage();
   return false;
 }
@@ -1901,8 +1930,41 @@ function isKnownTextOnlyProfile(profile) {
 }
 
 function updateComposerState() {
-  ui.sendButton.disabled = state.busy || (!ui.promptInput.value.trim() && !state.attachments.length);
+  const canStop = state.busy && Boolean(state.activeRequestId) && !state.stopRequested;
+  ui.sendButton.disabled = state.busy ? !canStop : (!ui.promptInput.value.trim() && !state.attachments.length);
+  ui.sendButton.classList.toggle("is-stop", state.busy && Boolean(state.activeRequestId));
+  ui.sendButton.setAttribute("aria-label", state.busy && state.activeRequestId ? "停止生成" : "发送");
+  ui.sendButton.dataset.tooltip = state.busy && state.activeRequestId ? "停止生成：立即取消当前模型请求" : "发送消息：Enter 发送，Shift + Enter 换行";
   ui.promptInput.disabled = state.busy;
+}
+
+function beginModelRequest() {
+  const requestId = crypto.randomUUID();
+  state.activeRequestId = requestId;
+  state.stopRequested = false;
+  return requestId;
+}
+
+function finishModelRequest(requestId) {
+  if (state.activeRequestId !== requestId) return;
+  state.activeRequestId = null;
+  state.stopRequested = false;
+}
+
+async function stopActiveRequest() {
+  if (!state.activeRequestId || state.stopRequested) return;
+  const requestId = state.activeRequestId;
+  state.stopRequested = true;
+  updateComposerState();
+  showToast("正在停止生成…");
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "CANCEL_AI_REQUEST", requestId });
+    if (!response?.ok) throw new Error(response?.error || "停止请求失败");
+  } catch (error) {
+    if (state.activeRequestId === requestId) state.stopRequested = false;
+    updateComposerState();
+    showToast(error.message || "停止请求失败");
+  }
 }
 
 function sanitizePromptLabel(value) {

@@ -5,7 +5,7 @@ const DEFAULTS = {
   fontSizeScale: "comfortable", activeProfileId: "default", modelProfiles: [], modelProfileLibraryVersion: 0
 };
 
-const MODEL_PROFILE_LIBRARY_VERSION = 2;
+const MODEL_PROFILE_LIBRARY_VERSION = 3;
 const BUILT_IN_MODEL_PROFILES = [
   { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000 },
   { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 },
@@ -15,6 +15,7 @@ const BUILT_IN_MODEL_PROFILES = [
 const PROVIDER_MODELS = {
   openai: ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"],
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  ollama: [],
   openrouter: ["~openai/gpt-latest"],
   compatible: []
 };
@@ -22,6 +23,7 @@ const PROVIDER_MODELS = {
 const PROVIDER_PRESETS = {
   openai: { apiMode: "responses", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra", maxLimit: 128000, tokenHint: "GPT-5.6 最高可配置 128,000；日常网页总结建议使用 4,000—16,000。" },
   deepseek: { apiMode: "chat", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash", maxLimit: 384000, tokenHint: "DeepSeek V4 当前最大输出为 384,000，但官方 API 仅支持文本输入；图片请切换到视觉模型或 ChatGPT 网页模式。" },
+  ollama: { apiMode: "chat", baseUrl: "http://127.0.0.1:11434", model: "", maxLimit: null, tokenHint: "Ollama 会自动使用 /v1/chat/completions；输出上限取决于本地模型和内存。" },
   openrouter: { apiMode: "chat", baseUrl: "https://openrouter.ai/api/v1", model: "~openai/gpt-latest", maxLimit: null, tokenHint: "OpenRouter 的输出上限由所选路由模型决定，请按对应模型能力设置。" },
   compatible: { apiMode: "chat", baseUrl: "", model: "", maxLimit: null, tokenHint: "请根据兼容服务的模型文档填写输出上限。" }
 };
@@ -40,6 +42,7 @@ const newProfileButton = document.getElementById("newProfileButton");
 const deleteProfileButton = document.getElementById("deleteProfileButton");
 const connectionModeHint = document.getElementById("connectionModeHint");
 const tokenHint = document.getElementById("tokenHint");
+const apiKeyHint = document.getElementById("apiKeyHint");
 const securityTitle = document.getElementById("securityTitle");
 const securityDescription = document.getElementById("securityDescription");
 const backupInstallNotice = document.getElementById("backupInstallNotice");
@@ -89,7 +92,7 @@ function migrateSettings(settings) {
 }
 
 function mergeBuiltInProfiles(profiles, libraryVersion) {
-  const next = profiles.map((profile) => ({ ...profile }));
+  const next = profiles.map((profile) => normalizeProfileProvider(profile));
   if (Number(libraryVersion || 0) < MODEL_PROFILE_LIBRARY_VERSION) {
     for (const builtIn of BUILT_IN_MODEL_PROFILES) {
       const exists = next.some((profile) => profile.id === builtIn.id
@@ -98,6 +101,13 @@ function mergeBuiltInProfiles(profiles, libraryVersion) {
     }
   }
   return inheritProviderApiKeys(next);
+}
+
+function normalizeProfileProvider(profile) {
+  const baseUrl = String(profile?.baseUrl || "").toLowerCase();
+  return profile?.provider === "compatible" && /:11434(?:\/|$)/.test(baseUrl)
+    ? { ...profile, provider: "ollama", apiMode: "chat" }
+    : { ...profile };
 }
 
 function inheritProviderApiKeys(profiles) {
@@ -195,12 +205,12 @@ function updateModeSections() {
   const webMode = fields.connectionMode.value === "chatgpt_web";
   for (const node of document.querySelectorAll(".api-only")) node.hidden = webMode;
   for (const field of [fields.profileSelect,fields.profileName,fields.provider,fields.apiMode,fields.baseUrl,fields.apiKey,fields.modelPreset,fields.model,fields.maxOutputTokens]) field.disabled = webMode;
-  fields.profileName.required = !webMode; fields.baseUrl.required = !webMode; fields.apiKey.required = !webMode; fields.model.required = !webMode; fields.maxOutputTokens.required = !webMode;
+  fields.profileName.required = !webMode; fields.baseUrl.required = !webMode; fields.model.required = !webMode; fields.maxOutputTokens.required = !webMode;
   document.querySelector(".settings-card:not(.api-only)")?.classList.toggle("is-web-mode", webMode);
   connectionModeHint.textContent = webMode ? "把网页上下文写入正常的 chatgpt.com 输入框，由你检查并手动发送；之后可同步页面上可见的最新回答。" : "直接请求你配置的模型服务，回答会自动返回 SideMind。";
   securityTitle.textContent = webMode ? "ChatGPT 网页交接的安全边界" : "API Key 模式的安全边界";
   securityDescription.textContent = webMode ? "只读取当前 ChatGPT 页面可见的回答 DOM；不读取 Cookie，不调用私有接口，不拦截网络响应，也不会自动点击发送。" : "每个模型配置的 API Key 保存在 chrome.storage.local，并限制为扩展受信任页面可读。正式发布时仍建议使用服务端代理。";
-  setStatus("");
+  updateApiKeyRequirement(); setStatus("");
 }
 
 function switchProvider() {
@@ -246,7 +256,17 @@ function applyModelChoice() {
   if (/^新模型/.test(fields.profileName.value)) fields.profileName.value = `${providerLabel(fields.provider.value)} · ${fields.model.value}`;
 }
 
-function updateProviderHint() { const preset = PROVIDER_PRESETS[fields.provider.value] || PROVIDER_PRESETS.compatible; tokenHint.textContent = preset.tokenHint; if (preset.maxLimit) fields.maxOutputTokens.max = String(preset.maxLimit); else fields.maxOutputTokens.removeAttribute("max"); }
+function updateProviderHint() { const preset = PROVIDER_PRESETS[fields.provider.value] || PROVIDER_PRESETS.compatible; tokenHint.textContent = preset.tokenHint; if (preset.maxLimit) fields.maxOutputTokens.max = String(preset.maxLimit); else fields.maxOutputTokens.removeAttribute("max"); updateApiKeyRequirement(); }
+
+function updateApiKeyRequirement() {
+  const webMode = fields.connectionMode.value === "chatgpt_web";
+  const ollama = fields.provider.value === "ollama";
+  fields.apiKey.required = !webMode && !ollama;
+  fields.apiKey.placeholder = ollama ? "Ollama 默认无需填写" : "sk-…";
+  apiKeyHint.textContent = ollama
+    ? "Ollama 默认无需 API Key。局域网访问若返回 HTTP 403，请在服务端配置 OLLAMA_ORIGINS。"
+    : "保存后应用到当前服务商下的全部模型，不需要为每个模型重复填写。";
+}
 
 async function saveSettings() {
   const webMode = fields.connectionMode.value === "chatgpt_web";
@@ -268,7 +288,7 @@ function snapshotCurrentProfile({ provider = state.currentProvider } = {}) {
   if (index >= 0) state.profiles[index] = nextProfile; else state.profiles.push(nextProfile);
 }
 
-function providerLabel(value) { return ({openai:"OpenAI",deepseek:"DeepSeek",openrouter:"OpenRouter",compatible:"兼容服务"})[value] || value; }
+function providerLabel(value) { return ({openai:"OpenAI",deepseek:"DeepSeek",ollama:"Ollama",openrouter:"OpenRouter",compatible:"兼容服务"})[value] || value; }
 function normalizeFontSizeScale(value) { return ["compact","comfortable","large","extra_large"].includes(value) ? value : "comfortable"; }
 function responseLanguageCode(value) { return ({"简体中文":"zh-CN","繁體中文":"zh-TW",English:"en",日本語:"ja",한국어:"ko",Español:"es",Français:"fr",Deutsch:"de"})[value] || "zh-CN"; }
 function setStatus(message, type = "") { statusText.textContent = message; statusText.className = type; }
