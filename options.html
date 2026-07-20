@@ -56,27 +56,23 @@
             </select>
             <small>恢复模式会同时切换到会话所属空间；打开聊天历史时，自动高亮并定位当前会话。</small>
           </label>
+
+          <label>
+            <span>侧栏字体大小</span>
+            <select id="fontSizeScale" name="fontSizeScale">
+              <option value="compact">紧凑</option>
+              <option value="comfortable">舒适（推荐）</option>
+              <option value="large">大</option>
+              <option value="extra_large">特大</option>
+            </select>
+            <small>调整聊天正文、输入框、按钮文字和辅助说明；保存后已打开的侧栏会立即更新。</small>
+          </label>
         </section>
 
         <section class="settings-card api-only">
           <div class="section-heading">
             <span class="step">02</span>
-            <div><h2>服务商与接口</h2><p>默认使用 OpenAI Responses API，也支持兼容 Chat Completions 的服务。</p></div>
-          </div>
-
-          <div class="form-grid profile-grid">
-            <label>
-              <span>模型配置</span>
-              <select id="profileSelect" name="profileSelect"></select>
-            </label>
-            <label>
-              <span>配置名称</span>
-              <input id="profileName" name="profileName" maxlength="40" placeholder="例如：DeepSeek 日常" required />
-            </label>
-            <div class="profile-actions">
-              <button id="newProfileButton" type="button">＋ 新建</button>
-              <button id="deleteProfileButton" type="button">删除</button>
-            </div>
+            <div><h2>先配置服务商</h2><p>服务商的接口、Base URL 和 API Key 由其下方模型共同使用。</p></div>
           </div>
 
           <div class="form-grid two-columns">
@@ -103,13 +99,6 @@
             <input id="baseUrl" name="baseUrl" type="url" spellcheck="false" placeholder="https://api.openai.com/v1" required />
             <small>填写到 <code>/v1</code> 即可；若填完整端点也能识别。</small>
           </label>
-        </section>
-
-        <section class="settings-card api-only">
-          <div class="section-heading">
-            <span class="step">03</span>
-            <div><h2>凭据与模型</h2><p>选择模型，并填写你自己的 API Key。</p></div>
-          </div>
 
           <label>
             <span>API Key</span>
@@ -117,22 +106,37 @@
               <input id="apiKey" name="apiKey" type="password" autocomplete="off" placeholder="sk-…" required />
               <button id="toggleKeyButton" type="button">显示</button>
             </div>
+            <small>保存后应用到当前服务商下的全部模型，不需要为每个模型重复填写。</small>
           </label>
+        </section>
+
+        <section class="settings-card api-only">
+          <div class="section-heading">
+            <span class="step">03</span>
+            <div><h2>再配置模型</h2><p>这里只显示当前服务商的模型，可添加多个并在侧栏快速切换。</p></div>
+          </div>
+
+          <div class="form-grid profile-grid">
+            <label>
+              <span>当前模型</span>
+              <select id="profileSelect" name="profileSelect"></select>
+            </label>
+            <label>
+              <span>显示名称</span>
+              <input id="profileName" name="profileName" maxlength="40" placeholder="例如：DeepSeek 日常" required />
+            </label>
+            <div class="profile-actions">
+              <button id="newProfileButton" type="button">＋ 添加模型</button>
+              <button id="deleteProfileButton" type="button">删除</button>
+            </div>
+          </div>
 
           <div class="form-grid two-columns">
             <label>
-              <span>模型 ID</span>
-              <input id="model" name="model" list="modelSuggestions" spellcheck="false" placeholder="gpt-5.6-terra" required />
-              <datalist id="modelSuggestions">
-                <option value="gpt-5.6-terra"></option>
-                <option value="gpt-5.6-sol"></option>
-                <option value="gpt-5.6-luna"></option>
-                <option value="gpt-5.5"></option>
-                <option value="gpt-5.4-mini"></option>
-                <option value="deepseek-v4-flash"></option>
-                <option value="deepseek-v4-pro"></option>
-                <option value="~openai/gpt-latest"></option>
-              </datalist>
+              <span>模型</span>
+              <select id="modelPreset" name="modelPreset"></select>
+              <input class="custom-model-input" id="model" name="model" spellcheck="false" placeholder="填写模型 ID" required hidden />
+              <small>同一服务商可保存多个模型档案，并在侧栏中快速切换；也可以选择“自定义模型 ID”。</small>
             </label>
             <label>
               <span>最大输出 Token</span>

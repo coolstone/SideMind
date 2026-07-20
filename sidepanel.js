@@ -42,15 +42,17 @@ const DEFAULT_UI_SETTINGS = {
   apiKey: "",
   responseLanguage: "简体中文",
   startupBehavior: "restore_last",
+  fontSizeScale: "comfortable",
   activeProfileId: "default",
   modelProfiles: [],
   modelProfileLibraryVersion: 0
 };
 
-const MODEL_PROFILE_LIBRARY_VERSION = 1;
+const MODEL_PROFILE_LIBRARY_VERSION = 2;
 const BUILT_IN_MODEL_PROFILES = [
   { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000 },
-  { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 }
+  { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 },
+  { id: "builtin-deepseek-pro", name: "DeepSeek · V4 Pro", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-pro", maxOutputTokens: 16000 }
 ];
 
 const DEFAULT_SPACE = { id: "space-default", name: "默认空间", createdAt: 0 };
@@ -232,6 +234,7 @@ async function loadSettings() {
   const { settings = {} } = await chrome.storage.local.get("settings");
   const migrated = ensureModelProfiles({ ...DEFAULT_UI_SETTINGS, ...settings });
   state.settings = migrated;
+  applyFontSize(migrated.fontSizeScale);
   if (!settings.modelProfiles?.length || Number(settings.modelProfileLibraryVersion || 0) < MODEL_PROFILE_LIBRARY_VERSION) {
     await chrome.storage.local.set({ settings: migrated });
   }
@@ -301,11 +304,28 @@ function ensureModelProfiles(settings) {
 
 function mergeBuiltInModelProfiles(profiles, libraryVersion) {
   const next = profiles.map((profile) => ({ ...profile }));
-  if (Number(libraryVersion || 0) >= MODEL_PROFILE_LIBRARY_VERSION) return next;
-  for (const builtIn of BUILT_IN_MODEL_PROFILES) {
-    if (!next.some((profile) => profile.provider === builtIn.provider)) next.push({ ...builtIn });
+  if (Number(libraryVersion || 0) < MODEL_PROFILE_LIBRARY_VERSION) {
+    for (const builtIn of BUILT_IN_MODEL_PROFILES) {
+      const exists = next.some((profile) => profile.id === builtIn.id
+        || (profile.provider === builtIn.provider && profile.model === builtIn.model));
+      if (!exists) next.push({ ...builtIn });
+    }
   }
-  return next;
+  const savedKeys = new Map();
+  for (const profile of next) {
+    if (profile.apiKey) savedKeys.set(providerCredentialKey(profile), profile.apiKey);
+  }
+  return next.map((profile) => profile.apiKey
+    ? profile
+    : { ...profile, apiKey: savedKeys.get(providerCredentialKey(profile)) || "" });
+}
+
+function providerCredentialKey(profile) {
+  return `${profile.provider || "compatible"}|${String(profile.baseUrl || "").replace(/\/+$/, "").toLowerCase()}`;
+}
+
+function applyFontSize(value) {
+  document.documentElement.dataset.fontSize = ["compact","comfortable","large","extra_large"].includes(value) ? value : "comfortable";
 }
 
 function updateModeUI() {
@@ -1554,14 +1574,27 @@ function renderModelProfiles() {
   ui.modelProfileList.replaceChildren();
   const profiles = state.settings?.modelProfiles || [];
   if (!profiles.length) return renderPopoverEmpty(ui.modelProfileList, "还没有模型配置，请先打开设置页添加。");
-  for (const profile of profiles) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `popover-item${profile.id === state.settings.activeProfileId ? " is-active" : ""}`;
-    const capability = isKnownTextOnlyProfile(profile) ? " · 仅文本" : "";
-    button.innerHTML = `<span class="popover-item-icon">${providerIcon(profile.provider)}</span><span class="popover-item-copy"><strong>${escapeHtml(profile.name || profile.model)}</strong><small>${escapeHtml(profile.provider)} · ${escapeHtml(profile.model)}${capability}</small></span><span>${profile.id === state.settings.activeProfileId ? "✓" : ""}</span>`;
-    button.addEventListener("click", () => switchModelProfile(profile.id));
-    ui.modelProfileList.appendChild(button);
+  const providerOrder = ["openai", "deepseek", "openrouter", "compatible"];
+  const providers = [...new Set(profiles.map((profile) => profile.provider || "compatible"))]
+    .sort((a, b) => (providerOrder.indexOf(a) < 0 ? 99 : providerOrder.indexOf(a)) - (providerOrder.indexOf(b) < 0 ? 99 : providerOrder.indexOf(b)));
+  for (const provider of providers) {
+    const providerProfiles = profiles.filter((profile) => (profile.provider || "compatible") === provider);
+    const group = document.createElement("section");
+    group.className = "model-provider-group";
+    const heading = document.createElement("div");
+    heading.className = "model-provider-heading";
+    heading.innerHTML = `<span>${providerIcon(provider)}</span><strong>${escapeHtml(providerLabel(provider))}</strong><small>${providerProfiles.length} 个模型</small>`;
+    group.appendChild(heading);
+    for (const profile of providerProfiles) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `popover-item${profile.id === state.settings.activeProfileId ? " is-active" : ""}`;
+      const capability = isKnownTextOnlyProfile(profile) ? " · 仅文本" : "";
+      button.innerHTML = `<span class="popover-item-icon">${providerIcon(profile.provider)}</span><span class="popover-item-copy"><strong>${escapeHtml(profile.name || profile.model)}</strong><small>${escapeHtml(profile.model)}${capability}</small></span><span>${profile.id === state.settings.activeProfileId ? "✓" : ""}</span>`;
+      button.addEventListener("click", () => switchModelProfile(profile.id));
+      group.appendChild(button);
+    }
+    ui.modelProfileList.appendChild(group);
   }
 }
 
@@ -1577,6 +1610,10 @@ async function switchModelProfile(profileId) {
 
 function providerIcon(provider) {
   return ({ openai: "O", deepseek: "D", openrouter: "R", compatible: "C" })[provider] || "AI";
+}
+
+function providerLabel(provider) {
+  return ({ openai: "OpenAI", deepseek: "DeepSeek", openrouter: "OpenRouter", compatible: "自定义兼容服务" })[provider] || provider;
 }
 
 function renderPromptList() {

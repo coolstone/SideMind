@@ -2,14 +2,22 @@ const DEFAULTS = {
   connectionMode: "api", provider: "openai", apiMode: "responses",
   baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra",
   apiKey: "", maxOutputTokens: 1800, language: "zh-CN", responseLanguage: "简体中文", startupBehavior: "restore_last",
-  activeProfileId: "default", modelProfiles: [], modelProfileLibraryVersion: 0
+  fontSizeScale: "comfortable", activeProfileId: "default", modelProfiles: [], modelProfileLibraryVersion: 0
 };
 
-const MODEL_PROFILE_LIBRARY_VERSION = 1;
+const MODEL_PROFILE_LIBRARY_VERSION = 2;
 const BUILT_IN_MODEL_PROFILES = [
   { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000 },
-  { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 }
+  { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 },
+  { id: "builtin-deepseek-pro", name: "DeepSeek · V4 Pro", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-pro", maxOutputTokens: 16000 }
 ];
+
+const PROVIDER_MODELS = {
+  openai: ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"],
+  deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  openrouter: ["~openai/gpt-latest"],
+  compatible: []
+};
 
 const PROVIDER_PRESETS = {
   openai: { apiMode: "responses", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra", maxLimit: 128000, tokenHint: "GPT-5.6 最高可配置 128,000；日常网页总结建议使用 4,000—16,000。" },
@@ -18,12 +26,12 @@ const PROVIDER_PRESETS = {
   compatible: { apiMode: "chat", baseUrl: "", model: "", maxLimit: null, tokenHint: "请根据兼容服务的模型文档填写输出上限。" }
 };
 
-const state = { profiles: [], activeProfileId: "default", previousSettings: {} };
+const state = { profiles: [], activeProfileId: "default", currentProvider: "openai", previousSettings: {} };
 const form = document.getElementById("settingsForm");
 const fields = {
-  connectionMode: document.getElementById("connectionMode"), responseLanguage: document.getElementById("responseLanguage"), startupBehavior: document.getElementById("startupBehavior"), profileSelect: document.getElementById("profileSelect"), profileName: document.getElementById("profileName"),
+  connectionMode: document.getElementById("connectionMode"), responseLanguage: document.getElementById("responseLanguage"), startupBehavior: document.getElementById("startupBehavior"), fontSizeScale: document.getElementById("fontSizeScale"), profileSelect: document.getElementById("profileSelect"), profileName: document.getElementById("profileName"),
   provider: document.getElementById("provider"), apiMode: document.getElementById("apiMode"), baseUrl: document.getElementById("baseUrl"),
-  apiKey: document.getElementById("apiKey"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens")
+  apiKey: document.getElementById("apiKey"), modelPreset: document.getElementById("modelPreset"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens")
 };
 const statusText = document.getElementById("statusText");
 const testButton = document.getElementById("testButton");
@@ -54,9 +62,11 @@ async function init() {
   state.previousSettings = values;
   state.profiles = values.modelProfiles;
   state.activeProfileId = values.activeProfileId;
+  state.currentProvider = state.profiles.find((profile) => profile.id === state.activeProfileId)?.provider || values.provider || "openai";
   fields.connectionMode.value = values.connectionMode;
   fields.responseLanguage.value = values.responseLanguage || DEFAULTS.responseLanguage;
   fields.startupBehavior.value = values.startupBehavior === "new_chat" ? "new_chat" : "restore_last";
+  fields.fontSizeScale.value = normalizeFontSizeScale(values.fontSizeScale);
   renderProfileSelect();
   loadProfile(state.activeProfileId);
   updateModeSections();
@@ -80,11 +90,28 @@ function migrateSettings(settings) {
 
 function mergeBuiltInProfiles(profiles, libraryVersion) {
   const next = profiles.map((profile) => ({ ...profile }));
-  if (Number(libraryVersion || 0) >= MODEL_PROFILE_LIBRARY_VERSION) return next;
-  for (const builtIn of BUILT_IN_MODEL_PROFILES) {
-    if (!next.some((profile) => profile.provider === builtIn.provider)) next.push({ ...builtIn });
+  if (Number(libraryVersion || 0) < MODEL_PROFILE_LIBRARY_VERSION) {
+    for (const builtIn of BUILT_IN_MODEL_PROFILES) {
+      const exists = next.some((profile) => profile.id === builtIn.id
+        || (profile.provider === builtIn.provider && profile.model === builtIn.model));
+      if (!exists) next.push({ ...builtIn });
+    }
   }
-  return next;
+  return inheritProviderApiKeys(next);
+}
+
+function inheritProviderApiKeys(profiles) {
+  const savedKeys = new Map();
+  for (const profile of profiles) {
+    if (profile.apiKey) savedKeys.set(providerCredentialKey(profile), profile.apiKey);
+  }
+  return profiles.map((profile) => profile.apiKey
+    ? profile
+    : { ...profile, apiKey: savedKeys.get(providerCredentialKey(profile)) || "" });
+}
+
+function providerCredentialKey(profile) {
+  return `${profile.provider || "compatible"}|${String(profile.baseUrl || "").replace(/\/+$/, "").toLowerCase()}`;
 }
 
 function profileFromValues(id, name, values) {
@@ -92,21 +119,29 @@ function profileFromValues(id, name, values) {
 }
 
 function renderProfileSelect() {
-  fields.profileSelect.replaceChildren(...state.profiles.map((profile) => {
+  const providerProfiles = profilesForProvider(state.currentProvider);
+  fields.profileSelect.replaceChildren(...providerProfiles.map((profile) => {
     const option = document.createElement("option"); option.value = profile.id; option.textContent = profile.name || profile.model; return option;
   }));
   fields.profileSelect.value = state.activeProfileId;
-  deleteProfileButton.disabled = state.profiles.length <= 1;
+  deleteProfileButton.disabled = providerProfiles.length <= 1;
+}
+
+function profilesForProvider(provider) {
+  return state.profiles.filter((profile) => profile.provider === provider);
 }
 
 function loadProfile(profileId) {
   const profile = state.profiles.find((item) => item.id === profileId) || state.profiles[0];
   if (!profile) return;
   state.activeProfileId = profile.id;
+  state.currentProvider = profile.provider;
   fields.profileSelect.value = profile.id;
-  for (const key of ["profileName","provider","apiMode","baseUrl","apiKey","model","maxOutputTokens"]) {
+  for (const key of ["profileName","provider","apiMode","baseUrl","apiKey","maxOutputTokens"]) {
     fields[key].value = key === "profileName" ? profile.name : profile[key];
   }
+  fields.model.value = profile.model || "";
+  renderModelChoices(profile.model);
   updateProviderHint();
 }
 
@@ -131,7 +166,8 @@ testButton.addEventListener("click", async () => {
 toggleKeyButton.addEventListener("click", () => { const showing = fields.apiKey.type === "text"; fields.apiKey.type = showing ? "password" : "text"; toggleKeyButton.textContent = showing ? "显示" : "隐藏"; });
 fields.connectionMode.addEventListener("change", updateModeSections);
 fields.profileSelect.addEventListener("change", () => { snapshotCurrentProfile(); loadProfile(fields.profileSelect.value); });
-fields.provider.addEventListener("change", () => applyProviderPreset(fields.provider.value));
+fields.provider.addEventListener("change", switchProvider);
+fields.modelPreset.addEventListener("change", applyModelChoice);
 newProfileButton.addEventListener("click", createProfile);
 deleteProfileButton.addEventListener("click", deleteProfile);
 exportBackupButton.addEventListener("click", exportLocalBackup);
@@ -141,23 +177,24 @@ dismissBackupNoticeButton.addEventListener("click", dismissBackupNotice);
 
 function createProfile() {
   snapshotCurrentProfile();
-  const preset = PROVIDER_PRESETS.openai;
-  const profile = profileFromValues(crypto.randomUUID(), `新模型 ${state.profiles.length + 1}`, { ...DEFAULTS, ...preset, apiKey: "" });
+  const active = state.profiles.find((profile) => profile.id === state.activeProfileId);
+  const preset = active || { ...DEFAULTS, ...PROVIDER_PRESETS.openai, apiKey: "" };
+  const profile = profileFromValues(crypto.randomUUID(), `新模型 ${state.profiles.length + 1}`, preset);
   state.profiles.push(profile); state.activeProfileId = profile.id; renderProfileSelect(); loadProfile(profile.id); fields.profileName.select(); setStatus("填写新模型配置后保存。", "");
 }
 
 async function deleteProfile() {
-  if (state.profiles.length <= 1) return;
+  if (profilesForProvider(state.currentProvider).length <= 1) return;
   const active = state.profiles.find((item) => item.id === state.activeProfileId);
   if (!window.confirm(`删除模型配置“${active?.name || "当前配置"}”？`)) return;
   state.profiles = state.profiles.filter((item) => item.id !== state.activeProfileId);
-  state.activeProfileId = state.profiles[0].id; renderProfileSelect(); loadProfile(state.activeProfileId); await saveSettings(); setStatus("模型配置已删除。", "success");
+  state.activeProfileId = profilesForProvider(state.currentProvider)[0].id; renderProfileSelect(); loadProfile(state.activeProfileId); await saveSettings(); setStatus("模型配置已删除。", "success");
 }
 
 function updateModeSections() {
   const webMode = fields.connectionMode.value === "chatgpt_web";
   for (const node of document.querySelectorAll(".api-only")) node.hidden = webMode;
-  for (const field of [fields.profileSelect,fields.profileName,fields.provider,fields.apiMode,fields.baseUrl,fields.apiKey,fields.model,fields.maxOutputTokens]) field.disabled = webMode;
+  for (const field of [fields.profileSelect,fields.profileName,fields.provider,fields.apiMode,fields.baseUrl,fields.apiKey,fields.modelPreset,fields.model,fields.maxOutputTokens]) field.disabled = webMode;
   fields.profileName.required = !webMode; fields.baseUrl.required = !webMode; fields.apiKey.required = !webMode; fields.model.required = !webMode; fields.maxOutputTokens.required = !webMode;
   document.querySelector(".settings-card:not(.api-only)")?.classList.toggle("is-web-mode", webMode);
   connectionModeHint.textContent = webMode ? "把网页上下文写入正常的 chatgpt.com 输入框，由你检查并手动发送；之后可同步页面上可见的最新回答。" : "直接请求你配置的模型服务，回答会自动返回 SideMind。";
@@ -166,11 +203,47 @@ function updateModeSections() {
   setStatus("");
 }
 
-function applyProviderPreset(provider) {
-  const preset = PROVIDER_PRESETS[provider]; if (!preset) return;
-  fields.apiMode.value = preset.apiMode; fields.baseUrl.value = preset.baseUrl; fields.model.value = preset.model; fields.apiKey.value = "";
-  if (!fields.profileName.value || /^新模型/.test(fields.profileName.value)) fields.profileName.value = `${providerLabel(provider)} · ${preset.model || "自定义"}`;
-  updateProviderHint(); setStatus("服务商已切换，请填写该服务商对应的 API Key。", "");
+function switchProvider() {
+  const nextProvider = fields.provider.value;
+  snapshotCurrentProfile({ provider: state.currentProvider });
+  let providerProfiles = profilesForProvider(nextProvider);
+  if (!providerProfiles.length) {
+    const preset = PROVIDER_PRESETS[nextProvider] || PROVIDER_PRESETS.compatible;
+    const credentialKey = providerCredentialKey({ provider: nextProvider, baseUrl: preset.baseUrl });
+    const inheritedKey = state.profiles.find((profile) => providerCredentialKey(profile) === credentialKey && profile.apiKey)?.apiKey || "";
+    const profile = profileFromValues(crypto.randomUUID(), `${providerLabel(nextProvider)} · ${preset.model || "自定义模型"}`, { ...DEFAULTS, ...preset, provider: nextProvider, apiKey: inheritedKey });
+    state.profiles.push(profile);
+    providerProfiles = [profile];
+  }
+  state.currentProvider = nextProvider;
+  state.activeProfileId = providerProfiles[0].id;
+  renderProfileSelect();
+  loadProfile(state.activeProfileId);
+  setStatus(`已切换到 ${providerLabel(nextProvider)}，下方仅显示该服务商的模型。`, "");
+}
+
+function renderModelChoices(currentModel = "") {
+  const models = PROVIDER_MODELS[fields.provider.value] || [];
+  const isKnown = models.includes(currentModel);
+  fields.modelPreset.replaceChildren(
+    ...models.map((model) => Object.assign(document.createElement("option"), { value: model, textContent: model })),
+    Object.assign(document.createElement("option"), { value: "__custom__", textContent: "自定义模型 ID…" })
+  );
+  fields.modelPreset.value = isKnown ? currentModel : "__custom__";
+  fields.model.hidden = isKnown;
+  fields.model.value = currentModel || "";
+}
+
+function applyModelChoice() {
+  const custom = fields.modelPreset.value === "__custom__";
+  fields.model.hidden = !custom;
+  if (custom) {
+    if ((PROVIDER_MODELS[fields.provider.value] || []).includes(fields.model.value)) fields.model.value = "";
+    fields.model.focus();
+    return;
+  }
+  fields.model.value = fields.modelPreset.value;
+  if (/^新模型/.test(fields.profileName.value)) fields.profileName.value = `${providerLabel(fields.provider.value)} · ${fields.model.value}`;
 }
 
 function updateProviderHint() { const preset = PROVIDER_PRESETS[fields.provider.value] || PROVIDER_PRESETS.compatible; tokenHint.textContent = preset.tokenHint; if (preset.maxLimit) fields.maxOutputTokens.max = String(preset.maxLimit); else fields.maxOutputTokens.removeAttribute("max"); }
@@ -181,18 +254,22 @@ async function saveSettings() {
   const active = state.profiles.find((item) => item.id === state.activeProfileId) || state.profiles[0];
   const responseLanguage = fields.responseLanguage.value || DEFAULTS.responseLanguage;
   const startupBehavior = fields.startupBehavior.value === "new_chat" ? "new_chat" : "restore_last";
-  const settings = { ...DEFAULTS, ...state.previousSettings, ...active, connectionMode:webMode ? "chatgpt_web" : "api", activeProfileId:active.id, modelProfiles:state.profiles, responseLanguage, language:responseLanguageCode(responseLanguage), startupBehavior };
+  const fontSizeScale = normalizeFontSizeScale(fields.fontSizeScale.value);
+  const settings = { ...DEFAULTS, ...state.previousSettings, ...active, connectionMode:webMode ? "chatgpt_web" : "api", activeProfileId:active.id, modelProfiles:state.profiles, responseLanguage, language:responseLanguageCode(responseLanguage), startupBehavior, fontSizeScale };
   state.previousSettings = settings; await chrome.storage.local.set({ settings }); renderProfileSelect(); return settings;
 }
 
-function snapshotCurrentProfile() {
+function snapshotCurrentProfile({ provider = state.currentProvider } = {}) {
   if (!state.activeProfileId || !fields.profileName.value) return;
-  const nextProfile = profileFromValues(state.activeProfileId, fields.profileName.value.trim(), { provider:fields.provider.value, apiMode:fields.apiMode.value, baseUrl:fields.baseUrl.value.trim().replace(/\/+$/, ""), apiKey:fields.apiKey.value.trim(), model:fields.model.value.trim(), maxOutputTokens:Number(fields.maxOutputTokens.value) || DEFAULTS.maxOutputTokens });
+  const sharedConnection = { provider, apiMode:fields.apiMode.value, baseUrl:fields.baseUrl.value.trim().replace(/\/+$/, ""), apiKey:fields.apiKey.value.trim() };
+  const nextProfile = profileFromValues(state.activeProfileId, fields.profileName.value.trim(), { ...sharedConnection, model:fields.model.value.trim(), maxOutputTokens:Number(fields.maxOutputTokens.value) || DEFAULTS.maxOutputTokens });
+  state.profiles = state.profiles.map((profile) => profile.provider === provider ? { ...profile, ...sharedConnection } : profile);
   const index = state.profiles.findIndex((item) => item.id === state.activeProfileId);
   if (index >= 0) state.profiles[index] = nextProfile; else state.profiles.push(nextProfile);
 }
 
 function providerLabel(value) { return ({openai:"OpenAI",deepseek:"DeepSeek",openrouter:"OpenRouter",compatible:"兼容服务"})[value] || value; }
+function normalizeFontSizeScale(value) { return ["compact","comfortable","large","extra_large"].includes(value) ? value : "comfortable"; }
 function responseLanguageCode(value) { return ({"简体中文":"zh-CN","繁體中文":"zh-TW",English:"en",日本語:"ja",한국어:"ko",Español:"es",Français:"fr",Deutsch:"de"})[value] || "zh-CN"; }
 function setStatus(message, type = "") { statusText.textContent = message; statusText.className = type; }
 function setBusy(busy) { testButton.disabled = busy; form.querySelector("button[type='submit']").disabled = busy; }
