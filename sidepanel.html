@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SideMind AI</title>
-    <link rel="stylesheet" href="sidepanel.css?v=12" />
+    <link rel="stylesheet" href="sidepanel.css?v=13" />
   </head>
   <body>
     <div class="app-shell">
@@ -100,6 +100,7 @@
         <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,text/plain,text/markdown,text/csv,application/json,text/html" multiple hidden />
         <form class="composer" id="composerForm">
           <textarea id="promptInput" rows="1" maxlength="12000" placeholder="问任何问题，可粘贴图片，@ 模型，/ 提示…"></textarea>
+          <p class="prompt-limit-hint" id="promptLimitHint" aria-live="polite" hidden></p>
           <div class="composer-toolbar">
             <div class="composer-tools">
               <button class="composer-icon-button new-chat-action" id="newChatActionButton" data-tooltip="新聊天：清空当前内容并开始新会话" type="button" aria-label="新聊天">
@@ -144,6 +145,10 @@
         <div class="drawer-header">
           <div><p class="eyebrow">YOUR LIBRARY</p><h2>聊天历史 <small id="historyCount">0</small></h2></div>
           <button class="icon-button" id="closeHistoryButton" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="history-tabs" role="tablist" aria-label="聊天记录筛选">
+          <button class="is-active" id="historyAllButton" type="button" role="tab" aria-selected="true">全部</button>
+          <button id="historyFavoritesButton" type="button" role="tab" aria-selected="false">我的收藏</button>
         </div>
         <div class="history-search"><span>⌕</span><input id="historySearchInput" type="search" placeholder="搜索当前空间的聊天" /></div>
         <div class="history-list" id="historyList"></div>
@@ -210,6 +215,47 @@
             <strong>打开支付宝扫一扫</strong>
           </div>
           <p class="donation-note">二维码图片仅保存在扩展本地，不会上传或收集支付信息。</p>
+        </div>
+      </dialog>
+
+      <dialog class="share-dialog" id="shareDialog" aria-labelledby="shareDialogTitle">
+        <div class="share-dialog-shell">
+          <div class="share-dialog-heading">
+            <div><p class="eyebrow">LOCAL SHARE</p><h2 id="shareDialogTitle">分享对话</h2></div>
+            <button id="closeShareButton" type="button" aria-label="关闭分享窗口">×</button>
+          </div>
+          <p class="share-intro">选择要分享的内容和格式。所有文件都在本地生成，不会上传到 SideMind 服务。</p>
+          <section class="share-section" aria-labelledby="shareContentTitle">
+            <div class="share-section-heading">
+              <div><h3 id="shareContentTitle">选择对话内容</h3><p>选择任一问题或回答，会自动选中该轮完整对话。</p></div>
+              <button class="share-select-all-button" id="shareSelectAllButton" type="button">全选</button>
+            </div>
+            <div class="share-conversation-list" id="shareConversationList" aria-label="可分享的对话列表"></div>
+          </section>
+          <section class="share-section" aria-labelledby="shareFormatTitle">
+            <h3 id="shareFormatTitle">导出为</h3>
+            <div class="share-format-options" role="group" aria-label="选择导出格式">
+              <button class="share-format-button is-active" id="shareFormatImage" type="button" data-share-format="image" aria-pressed="true"><b>图片</b><small>PNG 海报</small></button>
+              <button class="share-format-button" id="shareFormatMarkdown" type="button" data-share-format="markdown" aria-pressed="false"><b>Markdown</b><small>.md 文件</small></button>
+            </div>
+          </section>
+          <section class="share-section share-preview-section" aria-labelledby="sharePreviewTitle">
+            <h3 id="sharePreviewTitle">预览</h3>
+            <div class="share-preview" id="sharePreview"></div>
+          </section>
+          <section class="share-section" aria-labelledby="sharePlatformTitle">
+            <h3 id="sharePlatformTitle">分享至</h3>
+            <div class="share-platforms">
+              <button id="shareWeiboButton" type="button"><b>微博</b><small>打开发布页</small></button>
+              <button id="shareXButton" type="button"><b>𝕏</b><small>打开发布页</small></button>
+              <button id="shareWechatButton" type="button"><b>微信</b><small>复制后粘贴</small></button>
+            </div>
+          </section>
+          <p class="share-note" id="shareNotice"></p>
+          <div class="share-dialog-actions">
+            <button class="secondary-dialog-button" id="shareDownloadButton" type="button">下载文件</button>
+            <button class="primary-dialog-button" id="shareSystemButton" type="button">系统分享</button>
+          </div>
         </div>
       </dialog>
 

@@ -89,13 +89,21 @@ const state = {
   toastTimer: null,
   historySearchTimer: null,
   historyRenderToken: 0,
+  historyFilter: "all",
   lastConversationId: null,
   controlTooltipTimer: null,
   controlTooltipTarget: null,
   speakingMessageId: null,
   speechUtterance: null,
   templateVariableResolver: null,
-  templateVariableConsumedComposer: false
+  templateVariableConsumedComposer: false,
+  shareContext: null,
+  shareGroups: [],
+  shareSelectedGroupIds: new Set(),
+  shareFormat: "image",
+  sharePreviewToken: 0,
+  sharePreviewAsset: null,
+  sharePreviewObjectUrl: ""
 };
 
 const ui = Object.fromEntries([
@@ -103,13 +111,14 @@ const ui = Object.fromEntries([
   "contextToggle", "refreshContextButton", "welcomeState", "chatState",
   "messageList", "thinkingRow", "actionGrid", "quickActions", "promptOverflowButton",
   "importChatGPTButton", "attachmentList", "fileInput", "fileUploadButton", "composerForm",
-  "promptInput", "captureButton", "readPageButton", "connectionModeSelect", "modelButton", "modelName", "reasoningButton", "sendButton", "privacyNote", "historyDrawer",
-  "historyList", "historyCount", "historySearchInput", "closeHistoryButton", "importHistoryButton", "importHistoryInput", "exportHistoryButton", "clearHistoryButton", "drawerBackdrop", "toast",
+  "promptInput", "promptLimitHint", "captureButton", "readPageButton", "connectionModeSelect", "modelButton", "modelName", "reasoningButton", "sendButton", "privacyNote", "historyDrawer",
+  "historyList", "historyCount", "historySearchInput", "historyAllButton", "historyFavoritesButton", "closeHistoryButton", "importHistoryButton", "importHistoryInput", "exportHistoryButton", "clearHistoryButton", "drawerBackdrop", "toast",
   "modelPopover", "modelProfileList", "manageModelsButton", "promptPopover", "promptSearchInput", "promptList", "managePromptsButton",
   "spacePopover", "spaceList", "newSpaceButton", "contentArea",
   "templateVariableDialog", "templateVariableForm", "templateVariableTitle", "templateVariableSummary", "templateVariableFields", "closeTemplateVariableButton", "cancelTemplateVariableButton",
   "selectionPreview", "selectionPreviewText", "clearSelectionButton", "controlTooltip",
-  "donationDialog", "closeDonationButton", "wechatDonationTab", "alipayDonationTab", "wechatDonationPanel", "alipayDonationPanel"
+  "donationDialog", "closeDonationButton", "wechatDonationTab", "alipayDonationTab", "wechatDonationPanel", "alipayDonationPanel",
+  "shareDialog", "closeShareButton", "shareConversationList", "shareSelectAllButton", "shareFormatImage", "shareFormatMarkdown", "sharePreview", "shareNotice", "shareDownloadButton", "shareSystemButton", "shareWeiboButton", "shareXButton", "shareWechatButton"
 ].map((id) => [id, document.getElementById(id)]));
 
 init();
@@ -133,11 +142,24 @@ function bindEvents() {
   ui.donationDialog.querySelectorAll("[data-donation-method]").forEach((button) => {
     button.addEventListener("click", () => setDonationMethod(button.dataset.donationMethod));
   });
+  ui.closeShareButton.addEventListener("click", closeShareDialog);
+  ui.shareDialog.addEventListener("click", (event) => { if (event.target === ui.shareDialog) closeShareDialog(); });
+  ui.shareDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeShareDialog(); });
+  ui.shareConversationList.addEventListener("change", handleShareConversationSelection);
+  ui.shareSelectAllButton.addEventListener("click", toggleShareConversationSelection);
+  [ui.shareFormatImage, ui.shareFormatMarkdown].forEach((button) => button.addEventListener("click", () => setShareFormat(button.dataset.shareFormat)));
+  ui.shareDownloadButton.addEventListener("click", downloadShareAsset);
+  ui.shareSystemButton.addEventListener("click", shareUsingSystem);
+  ui.shareWeiboButton.addEventListener("click", () => shareToPlatform("weibo"));
+  ui.shareXButton.addEventListener("click", () => shareToPlatform("x"));
+  ui.shareWechatButton.addEventListener("click", () => shareToPlatform("wechat"));
   ui.promptLibraryButton.addEventListener("click", () => togglePopover("prompt"));
   ui.promptOverflowButton.addEventListener("click", () => togglePopover("prompt"));
   ui.spaceButton.addEventListener("click", () => togglePopover("space"));
   ui.historyButton.addEventListener("click", openHistory);
   ui.closeHistoryButton.addEventListener("click", closeHistory);
+  ui.historyAllButton.addEventListener("click", () => setHistoryFilter("all"));
+  ui.historyFavoritesButton.addEventListener("click", () => setHistoryFilter("favorites"));
   ui.drawerBackdrop.addEventListener("click", closeHistory);
   ui.importHistoryButton.addEventListener("click", () => ui.importHistoryInput.click());
   ui.importHistoryInput.addEventListener("change", importHistoryFile);
@@ -361,6 +383,31 @@ function updateModeUI() {
   ui.promptInput.placeholder = webMode
     ? "交接到 ChatGPT，/ 提示…"
     : "问任何问题，@ 模型，/ 提示…";
+  updatePromptInputLimit();
+}
+
+function currentPromptCharacterLimit() {
+  if (state.settings?.connectionMode === "chatgpt_web") return 12000;
+  const maxOutputTokens = Number(state.settings?.maxOutputTokens || 0);
+  return Math.max(1000, Math.min(120000, Math.floor((Number.isFinite(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : 24000) / 2)));
+}
+
+function updatePromptInputLimit() {
+  const limit = currentPromptCharacterLimit();
+  ui.promptInput.maxLength = limit;
+  const wasTruncated = ui.promptInput.value.length > limit;
+  if (wasTruncated) ui.promptInput.value = ui.promptInput.value.slice(0, limit);
+  const atLimit = ui.promptInput.value.length >= limit;
+  if (!atLimit) {
+    ui.promptLimitHint.textContent = "";
+    ui.promptLimitHint.hidden = true;
+    return;
+  }
+  const label = state.settings?.connectionMode === "chatgpt_web"
+    ? "已达到网页交接模式的问题上限 12,000 字"
+    : `已达到问题上限 ${limit.toLocaleString("zh-CN")} 字（当前模型最大输出 Token 的一半）`;
+  ui.promptLimitHint.textContent = wasTruncated ? `${label}；内容已按新模型上限截断。` : label;
+  ui.promptLimitHint.hidden = false;
 }
 
 function activeProfileName(settings) {
@@ -748,6 +795,18 @@ function createMessageElement(message) {
       ${messageToolButton("delete", "删除回答", '<path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>')}
     `;
     body.appendChild(tools);
+  } else {
+    const tools = document.createElement("div");
+    tools.className = "message-tools";
+    tools.innerHTML = `
+      ${messageToolButton("edit", "修改问题", '<path d="m4 20 4.2-1 10-10a2.8 2.8 0 0 0-4-4l-10 10L4 20Z"/><path d="m12.5 6.5 4 4"/>')}
+      ${messageToolButton("copy", "复制问题", '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>')}
+      ${messageToolButton("quote", "引用问题并继续提问", '<path d="M7 17h4V9H5v5h2v3Zm10 0h2V9h-6v5h4v3Z"/>')}
+      ${messageToolButton("share", "分享问题", '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"/>')}
+      ${messageToolButton("speak", "朗读问题", '<path d="M11 5 6.5 9H3v6h3.5l4.5 4V5Zm4 4a5 5 0 0 1 0 6m2.5-8.5a8 8 0 0 1 0 11"/>')}
+      ${messageToolButton("delete", "删除问题及对应答案", '<path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>')}
+    `;
+    body.appendChild(tools);
   }
   article.appendChild(body);
   return article;
@@ -970,7 +1029,7 @@ async function handleMessageTool(event) {
   const messageId = tool.closest(".message")?.dataset.messageId;
   const message = state.messages.find((item) => item.id === messageId);
   if (!message) return;
-  const visibleMessage = visibleAnswerMessage(message);
+  const visibleMessage = message.role === "assistant" ? visibleAnswerMessage(message) : message;
 
   if (tool.dataset.tool === "copy") {
     await navigator.clipboard.writeText(visibleMessage.content);
@@ -982,7 +1041,11 @@ async function handleMessageTool(event) {
     return;
   }
   if (tool.dataset.tool === "delete") {
-    await deleteAssistantMessage(message);
+    await (message.role === "user" ? deleteUserQuestionGroup(message) : deleteAssistantMessage(message));
+    return;
+  }
+  if (tool.dataset.tool === "edit") {
+    await editUserQuestion(message);
     return;
   }
   if (tool.dataset.tool === "quote") {
@@ -994,7 +1057,7 @@ async function handleMessageTool(event) {
     return;
   }
   if (tool.dataset.tool === "share") {
-    await shareMessage(visibleMessage);
+    openShareDialog(visibleMessage);
     return;
   }
   if (tool.dataset.tool === "speak") {
@@ -1020,6 +1083,7 @@ async function deleteAssistantMessage(message) {
   if (state.busy) return showToast("当前回答仍在生成，暂不能删除");
   if (!window.confirm("确定删除这条回答吗？此操作无法撤销。")) return;
   if (state.speakingMessageId === message.id) stopSpeaking();
+  if (state.shareContext && state.shareGroups.some((group) => group.messageIds.includes(message.id))) closeShareDialog();
   state.messages = state.messages.filter((item) => item.id !== message.id);
   ui.messageList.querySelector(`[data-message-id="${message.id}"]`)?.remove();
   if (state.lastImportedChatGPTText === message.content) state.lastImportedChatGPTText = "";
@@ -1049,6 +1113,74 @@ async function deleteAssistantMessage(message) {
     ui.welcomeState.hidden = false;
   }
   showToast("回答已删除");
+}
+
+async function editUserQuestion(message) {
+  if (state.busy) return showToast("当前回答仍在生成，暂不能修改问题");
+  const next = window.prompt("修改问题", message.content || "");
+  if (next === null) return;
+  const content = next.trim();
+  if (!content) return showToast("问题不能为空");
+  const limit = currentPromptCharacterLimit();
+  if (content.length > limit) return showToast(`问题最多 ${limit.toLocaleString("zh-CN")} 字`);
+  if (content === message.content) return;
+  message.content = content;
+  message.taskPrompt = content;
+  message.updatedAt = Date.now();
+  const oldElement = ui.messageList.querySelector(`[data-message-id="${message.id}"]`);
+  oldElement?.replaceWith(createMessageElement(message));
+  await saveConversationDraft();
+  showToast("问题已修改；已有回答保持不变");
+}
+
+async function deleteUserQuestionGroup(question) {
+  if (state.busy) return showToast("当前回答仍在生成，暂不能删除问题");
+  const questionIndex = state.messages.findIndex((item) => item.id === question.id);
+  if (questionIndex < 0) return;
+  let endIndex = state.messages.length;
+  for (let index = questionIndex + 1; index < state.messages.length; index += 1) {
+    if (state.messages[index].role === "user") {
+      endIndex = index;
+      break;
+    }
+  }
+  const removedMessages = state.messages.slice(questionIndex, endIndex);
+  const answerCount = removedMessages.filter((item) => item.role === "assistant").length;
+  const prompt = answerCount
+    ? `确定删除这条问题及其 ${answerCount} 组对应回答吗？此操作无法撤销。`
+    : "确定删除这条问题吗？此操作无法撤销。";
+  if (!window.confirm(prompt)) return;
+
+  const removedIds = new Set(removedMessages.map((item) => item.id));
+  if (removedIds.has(state.speakingMessageId)) stopSpeaking();
+  state.messages = state.messages.filter((item) => !removedIds.has(item.id));
+  if (removedMessages.some((item) => item.content === state.lastImportedChatGPTText)) state.lastImportedChatGPTText = "";
+  if (state.shareContext && state.shareGroups.some((group) => group.messageIds.some((id) => removedIds.has(id)))) closeShareDialog();
+  ui.messageList.replaceChildren(...state.messages.map(createMessageElement));
+
+  const { localArtifacts = [], conversations = [], uiPreferences = {} } = await chrome.storage.local.get(["localArtifacts", "conversations", "uiPreferences"]);
+  const patch = {};
+  if (Array.isArray(localArtifacts)) patch.localArtifacts = localArtifacts.filter((item) => !removedIds.has(item.messageId));
+  if (!state.messages.length && state.conversationId && Array.isArray(conversations)) {
+    patch.conversations = conversations.filter((item) => item.id !== state.conversationId);
+    if (state.lastConversationId === state.conversationId) {
+      state.lastConversationId = null;
+      patch.uiPreferences = { ...uiPreferences, lastConversationId: null };
+    }
+  }
+  if (Object.keys(patch).length) await chrome.storage.local.set(patch);
+
+  if (state.messages.length) {
+    await saveConversation();
+  } else {
+    state.conversationId = null;
+    state.conversationCreatedAt = null;
+    state.conversationTitle = "";
+    state.conversationTitleCustomized = false;
+    ui.chatState.hidden = true;
+    ui.welcomeState.hidden = false;
+  }
+  showToast(answerCount ? `已删除问题及 ${answerCount} 组对应回答` : "问题已删除");
 }
 
 function createArtifactShelf(message) {
@@ -1357,19 +1489,539 @@ function findPreviousMessageIndex(startIndex, role) {
   return -1;
 }
 
-async function shareMessage(message) {
-  const shareData = { title: "SideMind 回答", text: message.content };
-  if (navigator.share) {
-    try {
-      await navigator.share(shareData);
-      showToast("已打开系统分享");
-      return;
-    } catch (error) {
-      if (error?.name === "AbortError") return;
+function openShareDialog(message) {
+  state.shareGroups = buildShareConversationGroups();
+  const selectedGroup = state.shareGroups.find((group) => group.messageIds.includes(message.id));
+  if (!selectedGroup) return showToast("未找到可分享的问答内容");
+  state.shareContext = { anchorMessageId: message.id };
+  state.shareSelectedGroupIds = new Set([selectedGroup.id]);
+  state.shareFormat = "image";
+  renderShareConversationList();
+  invalidateSharePreview();
+  renderSharePreview();
+  if (!ui.shareDialog.open) ui.shareDialog.showModal();
+}
+
+function closeShareDialog() {
+  if (ui.shareDialog.open) ui.shareDialog.close();
+  state.shareContext = null;
+  state.shareGroups = [];
+  state.shareSelectedGroupIds = new Set();
+  ui.shareConversationList.replaceChildren();
+  invalidateSharePreview();
+}
+
+function buildShareConversationGroups() {
+  const groups = [];
+  let activeGroup = null;
+  for (const message of state.messages) {
+    if (message.role === "user") {
+      activeGroup = {
+        id: message.id,
+        question: message,
+        answers: [],
+        messageIds: [message.id]
+      };
+      groups.push(activeGroup);
+      continue;
+    }
+    if (activeGroup && message.role === "assistant") {
+      activeGroup.answers.push(message);
+      activeGroup.messageIds.push(message.id);
     }
   }
-  await navigator.clipboard.writeText(message.content);
-  showToast("当前环境不支持系统分享，已复制回答");
+  return groups;
+}
+
+function renderShareConversationList() {
+  const groups = state.shareGroups;
+  ui.shareConversationList.replaceChildren();
+  const allSelected = groups.length > 0 && groups.every((group) => state.shareSelectedGroupIds.has(group.id));
+  ui.shareSelectAllButton.disabled = groups.length === 0;
+  ui.shareSelectAllButton.textContent = allSelected ? "取消全选" : "全选";
+
+  if (!groups.length) {
+    const empty = document.createElement("p");
+    empty.className = "share-conversation-empty";
+    empty.textContent = "暂无可分享的问答";
+    ui.shareConversationList.append(empty);
+    return;
+  }
+
+  for (const [index, group] of groups.entries()) {
+    const selected = state.shareSelectedGroupIds.has(group.id);
+    const groupElement = document.createElement("article");
+    groupElement.className = `share-conversation-group${selected ? " is-selected" : ""}`;
+    groupElement.dataset.shareGroupId = group.id;
+    groupElement.append(createShareConversationMessage(group.question, `第 ${index + 1} 轮 · 问题`, selected, false));
+    for (const answer of group.answers) {
+      const visibleAnswer = visibleAnswerMessage(answer);
+      groupElement.append(createShareConversationMessage(visibleAnswer, `第 ${index + 1} 轮 · ${visibleAnswer.modelName || "SideMind"} 的回答`, selected, true));
+    }
+    ui.shareConversationList.append(groupElement);
+  }
+}
+
+function createShareConversationMessage(message, label, selected, isAnswer) {
+  const item = document.createElement("label");
+  item.className = `share-conversation-message${isAnswer ? " is-answer" : ""}`;
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = selected;
+  checkbox.dataset.shareMessageId = message.id;
+  checkbox.setAttribute("aria-label", `选择${label}`);
+  const copy = document.createElement("span");
+  const title = document.createElement("strong");
+  title.textContent = label;
+  const excerpt = document.createElement("small");
+  excerpt.textContent = truncateShareText(stripMarkdown(message.content || ""), 76) || "暂无内容";
+  copy.append(title, excerpt);
+  item.append(checkbox, copy);
+  return item;
+}
+
+function handleShareConversationSelection(event) {
+  const checkbox = event.target.closest("input[data-share-message-id]");
+  if (!checkbox) return;
+  const group = state.shareGroups.find((item) => item.messageIds.includes(checkbox.dataset.shareMessageId));
+  if (!group) return;
+  if (checkbox.checked) state.shareSelectedGroupIds.add(group.id);
+  else state.shareSelectedGroupIds.delete(group.id);
+  renderShareConversationList();
+  invalidateSharePreview();
+  renderSharePreview();
+}
+
+function toggleShareConversationSelection() {
+  const allSelected = state.shareGroups.length > 0 && state.shareGroups.every((group) => state.shareSelectedGroupIds.has(group.id));
+  state.shareSelectedGroupIds = allSelected ? new Set() : new Set(state.shareGroups.map((group) => group.id));
+  renderShareConversationList();
+  invalidateSharePreview();
+  renderSharePreview();
+}
+
+function setShareFormat(format) {
+  state.shareFormat = format === "markdown" ? "markdown" : "image";
+  ui.shareFormatImage.classList.toggle("is-active", state.shareFormat === "image");
+  ui.shareFormatMarkdown.classList.toggle("is-active", state.shareFormat === "markdown");
+  ui.shareFormatImage.setAttribute("aria-pressed", String(state.shareFormat === "image"));
+  ui.shareFormatMarkdown.setAttribute("aria-pressed", String(state.shareFormat === "markdown"));
+  invalidateSharePreview();
+  renderSharePreview();
+}
+
+function invalidateSharePreview() {
+  state.sharePreviewToken += 1;
+  state.sharePreviewAsset = null;
+  if (state.sharePreviewObjectUrl) URL.revokeObjectURL(state.sharePreviewObjectUrl);
+  state.sharePreviewObjectUrl = "";
+}
+
+function buildSharePayload() {
+  if (!state.shareContext) throw new Error("没有可分享的回答");
+  const selectedGroups = state.shareGroups.filter((group) => state.shareSelectedGroupIds.has(group.id));
+  if (!selectedGroups.length) throw new Error("请至少选择一轮对话");
+  const sections = [];
+  const multipleGroups = selectedGroups.length > 1;
+  for (const [index, group] of selectedGroups.entries()) {
+    const prefix = multipleGroups ? `第 ${index + 1} 轮 · ` : "";
+    if (group.question?.content) sections.push({ label: `${prefix}你的提问`, content: group.question.content });
+    for (const answer of group.answers) {
+      const visibleAnswer = visibleAnswerMessage(answer);
+      if (visibleAnswer.content) sections.push({ label: `${prefix}${visibleAnswer.modelName || "SideMind"} 的回答`, content: visibleAnswer.content });
+    }
+  }
+  if (!sections.length) throw new Error("请至少选择一项对话内容");
+
+  const titleSource = selectedGroups[0]?.question?.content || sections[0]?.content || "对话分享";
+  const title = truncateShareText(stripMarkdown(titleSource), 56) || "SideMind 对话分享";
+  const markdown = [
+    `# ${title}`,
+    "",
+    "> 由 SideMind 本地生成的对话分享",
+    "",
+    ...sections.flatMap((section) => [`## ${section.label}`, "", section.content.trim(), ""])
+  ].join("\n").trimEnd() + "\n";
+  return { title, sections, markdown, answer: selectedGroups[0]?.answers[0] || null };
+}
+
+async function renderSharePreview() {
+  if (!state.shareContext) return;
+  const renderToken = ++state.sharePreviewToken;
+  let payload;
+  try {
+    payload = buildSharePayload();
+  } catch (error) {
+    ui.sharePreview.textContent = error.message;
+    ui.shareNotice.textContent = "至少勾选一项内容后才能继续分享。";
+    return;
+  }
+
+  ui.sharePreview.replaceChildren();
+  if (state.shareFormat === "markdown") {
+    const code = document.createElement("pre");
+    code.textContent = truncateShareText(payload.markdown, 980);
+    ui.sharePreview.append(code);
+    ui.shareNotice.textContent = "这是 Markdown 内容预览；仅在点击“下载文件”后生成 .md。微博和 X 会打开发布页并预填摘要，完整 Markdown 会复制到剪贴板。";
+    return;
+  }
+
+  const loading = document.createElement("p");
+  loading.className = "share-preview-loading";
+  loading.textContent = "正在本地生成 PNG 预览…";
+  ui.sharePreview.append(loading);
+  ui.shareNotice.textContent = "预览仅在浏览器内生成，不会下载文件；确认后再点击“下载文件”。";
+  try {
+    const asset = await createShareAsset({ skipPreviewCache: true });
+    if (renderToken !== state.sharePreviewToken || !state.shareContext || state.shareFormat !== "image") return;
+    state.sharePreviewAsset = asset;
+    state.sharePreviewObjectUrl = URL.createObjectURL(asset.blob);
+    const image = document.createElement("img");
+    image.className = "share-preview-image";
+    image.src = state.sharePreviewObjectUrl;
+    image.alt = "SideMind PNG 分享预览";
+    ui.sharePreview.replaceChildren(image);
+    ui.shareNotice.textContent = "这是实际 PNG 的本地预览，尚未下载。满意后点击“下载文件”；微博、X、微信可复制素材后手动发布。";
+  } catch (error) {
+    if (renderToken !== state.sharePreviewToken) return;
+    ui.sharePreview.textContent = error.message || "PNG 预览生成失败";
+    ui.shareNotice.textContent = "请调整分享内容后重试。";
+  }
+}
+
+async function downloadShareAsset() {
+  try {
+    const asset = await createShareAsset();
+    downloadBlob(asset.filename, asset.blob);
+    showToast(asset.format === "image" ? "PNG 图片已下载" : "Markdown 文件已下载");
+  } catch (error) {
+    showToast(error.message || "生成分享文件失败");
+  }
+}
+
+async function shareUsingSystem() {
+  try {
+    const asset = await createShareAsset();
+    const payload = buildSharePayload();
+    const file = new File([asset.blob], asset.filename, { type: asset.blob.type });
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+      try {
+        await navigator.share({ title: payload.title, text: socialShareSummary(payload), files: [file] });
+        showToast("已打开系统分享");
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    showToast("当前环境不支持文件系统分享，请先预览后点击“下载文件”");
+  } catch (error) {
+    showToast(error.message || "系统分享失败");
+  }
+}
+
+async function shareToPlatform(platform) {
+  try {
+    const payload = buildSharePayload();
+    if (platform === "wechat") {
+      const copied = await copyShareAsset();
+      showToast(copied ? "已复制到剪贴板，请切换到微信粘贴发送" : "微信无法直接发送；请确认预览后点击“下载文件”再手动发送");
+      return;
+    }
+
+    const asset = await createShareAsset();
+    const copied = await copyShareAsset(asset);
+    const summary = socialShareSummary(payload);
+    const url = platform === "x"
+      ? `https://x.com/intent/post?text=${encodeURIComponent(summary)}`
+      : `https://service.weibo.com/share/share.php?title=${encodeURIComponent(summary)}`;
+    await chrome.tabs.create({ url });
+    const label = platform === "x" ? "X" : "微博";
+    showToast(asset.format === "image"
+      ? `${copied ? "已复制图片并" : "已"}打开${label}发布页；如需文件请点击“下载文件”`
+      : `${copied ? "已复制 Markdown并" : "已"}打开${label}发布页`);
+  } catch (error) {
+    showToast(error.message || "打开分享平台失败");
+  }
+}
+
+async function copyShareAsset(existingAsset = null) {
+  const asset = existingAsset || await createShareAsset();
+  try {
+    if (asset.format === "markdown") {
+      await navigator.clipboard.writeText(asset.text);
+      return true;
+    }
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error("图片剪贴板不可用");
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": asset.blob })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function createShareAsset({ skipPreviewCache = false } = {}) {
+  if (!skipPreviewCache && state.sharePreviewAsset?.format === state.shareFormat) return state.sharePreviewAsset;
+  const payload = buildSharePayload();
+  const filenameBase = shareFilenameBase(payload);
+  if (state.shareFormat === "markdown") {
+    return {
+      format: "markdown",
+      filename: `${filenameBase}.md`,
+      text: payload.markdown,
+      blob: new Blob([`\uFEFF${payload.markdown}`], { type: "text/markdown;charset=utf-8" })
+    };
+  }
+  return {
+    format: "image",
+    filename: `${filenameBase}.png`,
+    blob: await createShareImageBlob(payload)
+  };
+}
+
+function shareFilenameBase(payload) {
+  const safe = payload.title.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 42) || "对话分享";
+  const date = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `SideMind-分享-${safe}-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
+function socialShareSummary(payload) {
+  const answer = payload.sections.find((section) => section.label.includes("回答"))?.content || payload.sections[0]?.content || "";
+  return `${payload.title}\n${truncateShareText(stripMarkdown(answer), 230)}\n\n— SideMind`;
+}
+
+function truncateShareText(value, maxLength) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, Math.max(1, maxLength - 1))}…` : text;
+}
+
+function downloadBlob(filename, blob) {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.hidden = true;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+async function createShareImageBlob(payload) {
+  const logicalWidth = 860;
+  const padding = 54;
+  const bodyWidth = logicalWidth - padding * 2;
+  const canvas = document.createElement("canvas");
+  const measureContext = canvas.getContext("2d");
+  if (!measureContext) throw new Error("当前浏览器无法生成图片");
+  let remainingShareLines = 68;
+  const prepared = payload.sections.map((section) => {
+    const blocks = prepareMarkdownCanvasBlocks(measureContext, section.content, bodyWidth, remainingShareLines);
+    remainingShareLines -= blocks.reduce((total, block) => total + block.lines.length, 0);
+    const contentHeight = blocks.reduce((total, block) => total + block.height + block.marginBottom, 0);
+    return { ...section, blocks, contentHeight };
+  });
+  const height = Math.max(460, Math.min(2450, 142 + prepared.reduce((total, section) => total + 46 + section.contentHeight + 24, 0) + 66));
+  const scale = 2;
+  canvas.width = logicalWidth * scale;
+  canvas.height = height * scale;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前浏览器无法生成图片");
+  context.scale(scale, scale);
+  const gradient = context.createLinearGradient(0, 0, logicalWidth, height);
+  gradient.addColorStop(0, "#f4f0ff");
+  gradient.addColorStop(.5, "#f8fbff");
+  gradient.addColorStop(1, "#eef6ff");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, logicalWidth, height);
+  drawRoundedCanvasRect(context, 24, 22, logicalWidth - 48, height - 44, 30, "#ffffff");
+  drawRoundedCanvasRect(context, padding, 48, 39, 39, 12, "#6d55e7");
+  context.fillStyle = "#ffffff";
+  context.font = "800 23px system-ui, sans-serif";
+  context.fillText("S", padding + 12, 76);
+  context.fillStyle = "#211d2f";
+  context.font = "800 26px system-ui, -apple-system, sans-serif";
+  context.fillText("SideMind", padding + 52, 73);
+  context.fillStyle = "#777186";
+  context.font = "500 15px system-ui, sans-serif";
+  context.fillText("本地对话分享", padding + 52, 95);
+  let y = 142;
+  prepared.forEach((section) => {
+    context.fillStyle = "#6d55e7";
+    context.font = "800 15px system-ui, sans-serif";
+    context.fillText(section.label, padding, y);
+    y += 27;
+    section.blocks.forEach((block) => {
+      drawMarkdownCanvasBlock(context, block, padding, y, bodyWidth);
+      y += block.height + block.marginBottom;
+    });
+    y += 20;
+  });
+  context.fillStyle = "#9b96a6";
+  context.font = "500 13px system-ui, sans-serif";
+  context.fillText("由 SideMind 在本地生成", padding, height - 48);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("PNG 图片生成失败")), "image/png");
+  });
+}
+
+function prepareMarkdownCanvasBlocks(context, markdown, maxWidth, maxLines = 62) {
+  const rawBlocks = parseMarkdownCanvasBlocks(markdown);
+  const blocks = [];
+  let remainingLines = maxLines;
+  for (const raw of rawBlocks) {
+    if (remainingLines <= 0) break;
+    const style = markdownCanvasStyle(raw.type);
+    context.font = style.font;
+    const prefixWidth = raw.prefix ? context.measureText(raw.prefix).width + 12 : 0;
+    const lines = wrapCanvasText(context, raw.text, Math.max(90, maxWidth - style.indent - prefixWidth), remainingLines);
+    if (!lines.length) continue;
+    remainingLines -= lines.length;
+    const visibleLines = remainingLines < 0 ? lines.slice(0, remainingLines + lines.length) : lines;
+    const isCode = raw.type === "code";
+    const height = isCode
+      ? visibleLines.length * style.lineHeight + style.codePadding * 2
+      : Math.max(style.lineHeight, visibleLines.length * style.lineHeight);
+    blocks.push({ ...raw, ...style, lines: visibleLines, height, marginBottom: style.marginBottom });
+  }
+  if (remainingLines <= 0 && blocks.length) {
+    const last = blocks.at(-1);
+    const lineIndex = last.lines.length - 1;
+    if (lineIndex >= 0 && !last.lines[lineIndex].endsWith("…")) last.lines[lineIndex] = `${last.lines[lineIndex].slice(0, -1)}…`;
+  }
+  return blocks;
+}
+
+function parseMarkdownCanvasBlocks(markdown) {
+  const blocks = [];
+  const paragraph = [];
+  const code = [];
+  let inCode = false;
+  const flushParagraph = () => {
+    const value = paragraph.join(" ").trim();
+    if (value) blocks.push({ type: "paragraph", text: stripInlineMarkdown(value) });
+    paragraph.length = 0;
+  };
+  const flushCode = () => {
+    if (code.length) blocks.push({ type: "code", text: code.join("\n") });
+    code.length = 0;
+  };
+  for (const sourceLine of String(markdown || "").replace(/\r/g, "").split("\n")) {
+    const line = sourceLine.trimEnd();
+    if (/^```/.test(line.trim())) {
+      if (inCode) flushCode(); else flushParagraph();
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      code.push(sourceLine || " ");
+      continue;
+    }
+    if (!line.trim()) {
+      flushParagraph();
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      blocks.push({ type: `heading${heading[1].length}`, text: stripInlineMarkdown(heading[2]) });
+      continue;
+    }
+    const quote = line.match(/^>\s?(.+)$/);
+    if (quote) {
+      flushParagraph();
+      blocks.push({ type: "quote", text: stripInlineMarkdown(quote[1]) });
+      continue;
+    }
+    const unordered = line.match(/^[-*+]\s+(.+)$/);
+    const ordered = line.match(/^(\d+)[.)]\s+(.+)$/);
+    if (unordered || ordered) {
+      flushParagraph();
+      blocks.push({ type: "list", prefix: unordered ? "•" : `${ordered[1]}.`, text: stripInlineMarkdown(unordered ? unordered[1] : ordered[2]) });
+      continue;
+    }
+    paragraph.push(line.trim());
+  }
+  if (inCode) flushCode();
+  flushParagraph();
+  return blocks.length ? blocks : [{ type: "paragraph", text: " " }];
+}
+
+function stripInlineMarkdown(value) {
+  return String(value || "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/(\*\*|__)(.*?)\1/g, "$2")
+    .replace(/[*_~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function markdownCanvasStyle(type) {
+  const sans = "system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
+  if (type === "heading1") return { font: `800 31px ${sans}`, lineHeight: 43, color: "#1e1930", indent: 0, marginBottom: 16 };
+  if (type === "heading2") return { font: `800 26px ${sans}`, lineHeight: 38, color: "#33215f", indent: 0, marginBottom: 14 };
+  if (type === "heading3") return { font: `800 22px ${sans}`, lineHeight: 33, color: "#3e3263", indent: 0, marginBottom: 11 };
+  if (type === "quote") return { font: `500 20px ${sans}`, lineHeight: 31, color: "#62587a", indent: 22, marginBottom: 14 };
+  if (type === "list") return { font: `500 21px ${sans}`, lineHeight: 33, color: "#282433", indent: 22, marginBottom: 7 };
+  if (type === "code") return { font: "500 16px ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 26, color: "#4d426f", indent: 12, marginBottom: 15, codePadding: 13 };
+  return { font: `500 21px ${sans}`, lineHeight: 33, color: "#282433", indent: 0, marginBottom: 13 };
+}
+
+function drawMarkdownCanvasBlock(context, block, x, y, maxWidth) {
+  context.font = block.font;
+  context.fillStyle = block.color;
+  if (block.type === "code") {
+    drawRoundedCanvasRect(context, x, y - block.codePadding - 3, maxWidth, block.height, 12, "#f4f1fb");
+  }
+  if (block.type === "quote") {
+    drawRoundedCanvasRect(context, x, y - 21, 5, block.height + 7, 3, "#8f7ce6");
+  }
+  let lineY = y;
+  block.lines.forEach((line, index) => {
+    const prefix = index === 0 ? block.prefix : "";
+    if (prefix) context.fillText(prefix, x + block.indent, lineY);
+    const prefixWidth = prefix ? context.measureText(prefix).width + 12 : 0;
+    const textX = x + block.indent + (index === 0 ? prefixWidth : 0);
+    context.fillText(line, textX, lineY);
+    lineY += block.lineHeight;
+  });
+}
+
+function wrapCanvasText(context, value, maxWidth, maxLines) {
+  const rawLines = String(value || "").replace(/\r/g, "").split("\n");
+  const result = [];
+  rawLines.forEach((rawLine) => {
+    let line = "";
+    for (const character of rawLine || " ") {
+      const candidate = line + character;
+      if (context.measureText(candidate).width > maxWidth && line) {
+        result.push(line);
+        line = character;
+      } else {
+        line = candidate;
+      }
+      if (result.length >= maxLines) break;
+    }
+    if (result.length < maxLines) result.push(line || " ");
+  });
+  if (result.length > maxLines) result.length = maxLines;
+  if (result.length === maxLines && String(value || "").length > result.join("").length) result[maxLines - 1] = `${result[maxLines - 1].slice(0, -1)}…`;
+  return result;
+}
+
+function drawRoundedCanvasRect(context, x, y, width, height, radius, fillStyle) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.arcTo(x + width, y, x + width, y + height, r);
+  context.arcTo(x + width, y + height, x, y + height, r);
+  context.arcTo(x, y + height, x, y, r);
+  context.arcTo(x, y, x + width, y, r);
+  context.closePath();
+  context.fillStyle = fillStyle;
+  context.fill();
 }
 
 function toggleSpeakMessage(message, button) {
@@ -1738,6 +2390,7 @@ async function saveConversation() {
     id: state.conversationId,
     title,
     titleCustomized,
+    favorite: Boolean(previous?.favorite),
     pageTitle: state.context?.title || "",
     url: state.context?.url || "",
     spaceId: state.currentSpaceId,
@@ -1799,6 +2452,15 @@ async function openHistory() {
   await renderHistory({ focusCurrent: true });
 }
 
+async function setHistoryFilter(filter) {
+  state.historyFilter = filter === "favorites" ? "favorites" : "all";
+  ui.historyAllButton.classList.toggle("is-active", state.historyFilter === "all");
+  ui.historyFavoritesButton.classList.toggle("is-active", state.historyFilter === "favorites");
+  ui.historyAllButton.setAttribute("aria-selected", String(state.historyFilter === "all"));
+  ui.historyFavoritesButton.setAttribute("aria-selected", String(state.historyFilter === "favorites"));
+  await renderHistory();
+}
+
 async function renderHistory({ focusCurrent = false } = {}) {
   const renderToken = ++state.historyRenderToken;
   const { conversations = [] } = await chrome.storage.local.get("conversations");
@@ -1806,22 +2468,23 @@ async function renderHistory({ focusCurrent = false } = {}) {
   const query = ui.historySearchInput.value.trim().toLowerCase();
   const filtered = conversations.filter((conversation) => {
     const inSpace = (conversation.spaceId || DEFAULT_SPACE.id) === state.currentSpaceId;
+    const inFavorites = state.historyFilter !== "favorites" || Boolean(conversation.favorite);
     const haystack = `${conversation.title || ""} ${conversation.pageTitle || ""} ${conversation.messages?.map((item) => item.content).join(" ") || ""}`.toLowerCase();
-    return inSpace && (!query || haystack.includes(query));
+    return inSpace && inFavorites && (!query || haystack.includes(query));
   });
   ui.historyCount.textContent = String(filtered.length);
   ui.historyList.replaceChildren();
   if (!filtered.length) {
     const empty = document.createElement("p");
     empty.className = "history-empty";
-    empty.textContent = query ? "没有找到匹配的聊天。" : "当前空间还没有对话。完成一次回答后，它会出现在这里。";
+    empty.textContent = query ? "没有找到匹配的聊天。" : state.historyFilter === "favorites" ? "还没有收藏的聊天。点击会话右侧的星标即可收藏。" : "当前空间还没有对话。完成一次回答后，它会出现在这里。";
     ui.historyList.appendChild(empty);
   } else {
     let currentRow = null;
     for (const conversation of filtered) {
       const row = document.createElement("div");
       const isCurrent = conversation.id === state.conversationId;
-      row.className = `history-item-row${isCurrent ? " is-current" : ""}`;
+      row.className = `history-item-row${isCurrent ? " is-current" : ""}${conversation.favorite ? " is-favorite" : ""}`;
       row.dataset.conversationId = conversation.id;
       const openButton = document.createElement("button");
       openButton.className = "history-item";
@@ -1836,7 +2499,24 @@ async function renderHistory({ focusCurrent = false } = {}) {
       editButton.setAttribute("aria-label", `修改“${conversation.title || "新对话"}”的标题`);
       editButton.textContent = "✎";
       editButton.addEventListener("click", () => editConversationTitle(conversation));
-      row.append(openButton, editButton);
+      const favoriteButton = document.createElement("button");
+      favoriteButton.className = `history-row-action history-favorite-button${conversation.favorite ? " is-active" : ""}`;
+      favoriteButton.type = "button";
+      favoriteButton.title = conversation.favorite ? "取消收藏" : "收藏聊天";
+      favoriteButton.setAttribute("aria-label", `${conversation.favorite ? "取消收藏" : "收藏"}“${conversation.title || "新对话"}”`);
+      favoriteButton.textContent = conversation.favorite ? "★" : "☆";
+      favoriteButton.addEventListener("click", () => toggleConversationFavorite(conversation));
+      const deleteButton = document.createElement("button");
+      deleteButton.className = "history-row-action history-delete-button";
+      deleteButton.type = "button";
+      deleteButton.title = "删除聊天记录";
+      deleteButton.setAttribute("aria-label", `删除“${conversation.title || "新对话"}”`);
+      deleteButton.textContent = "⌫";
+      deleteButton.addEventListener("click", () => deleteConversationFromHistory(conversation));
+      const actions = document.createElement("div");
+      actions.className = "history-item-actions";
+      actions.append(editButton, favoriteButton, deleteButton);
+      row.append(openButton, actions);
       ui.historyList.appendChild(row);
       if (isCurrent) currentRow = row;
     }
@@ -1861,6 +2541,39 @@ async function editConversationTitle(conversation) {
   }
   await renderHistory();
   showToast("聊天标题已修改");
+}
+
+async function toggleConversationFavorite(conversation) {
+  const { conversations = [] } = await chrome.storage.local.get("conversations");
+  const favorite = !conversation.favorite;
+  const next = (Array.isArray(conversations) ? conversations : []).map((item) => item.id === conversation.id
+    ? { ...item, favorite } : item);
+  await chrome.storage.local.set({ conversations: next });
+  await renderHistory();
+  showToast(favorite ? "已收藏聊天" : "已取消收藏");
+}
+
+async function deleteConversationFromHistory(conversation) {
+  if (state.busy) return showToast("当前回答仍在生成，暂不能删除聊天记录");
+  if (!window.confirm(`确定删除“${conversation.title || "新对话"}”吗？聊天内容和关联工件将被删除，且无法撤销。`)) return;
+  const { conversations = [], localArtifacts = [], uiPreferences = {} } = await chrome.storage.local.get(["conversations", "localArtifacts", "uiPreferences"]);
+  const messageIds = new Set((conversation.messages || []).map((item) => item.id));
+  const patch = {
+    conversations: (Array.isArray(conversations) ? conversations : []).filter((item) => item.id !== conversation.id),
+    localArtifacts: (Array.isArray(localArtifacts) ? localArtifacts : []).filter((item) => !messageIds.has(item.messageId))
+  };
+  if (state.lastConversationId === conversation.id) {
+    state.lastConversationId = null;
+    patch.uiPreferences = { ...uiPreferences, lastConversationId: null };
+  }
+  await chrome.storage.local.set(patch);
+  if (state.conversationId === conversation.id) {
+    startNewChat({ skipConfirmation: true });
+    await openHistory();
+  } else {
+    await renderHistory();
+  }
+  showToast("聊天记录已删除");
 }
 
 function closeHistory() {
@@ -2382,6 +3095,7 @@ function isKnownTextOnlyProfile(profile) {
 }
 
 function updateComposerState() {
+  updatePromptInputLimit();
   const canStop = state.busy && Boolean(state.activeRequestId) && !state.stopRequested;
   ui.sendButton.disabled = state.busy ? !canStop : (!ui.promptInput.value.trim() && !state.attachments.length);
   ui.sendButton.classList.toggle("is-stop", state.busy && Boolean(state.activeRequestId));

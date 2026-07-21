@@ -2,11 +2,12 @@
   "manifest_version": 3,
   "name": "SideMind AI",
   "short_name": "SideMind",
-  "version": "0.5.20",
+  "version": "0.5.28",
   "minimum_chrome_version": "116",
   "description": "A context-aware AI copilot that lives beside every webpage.",
   "permissions": [
     "activeTab",
+    "clipboardWrite",
     "contextMenus",
     "scripting",
     "sidePanel",
