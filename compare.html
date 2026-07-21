@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SideMind · AI 回答比较</title>
+  <link rel="stylesheet" href="compare.css">
+  <script src="compare.js" defer></script>
+</head>
+<body>
+  <header class="compare-header">
+    <a class="brand" href="sidepanel.html" aria-label="SideMind">
+      <img src="assets/logo.svg" alt="">
+      <strong>SideMind</strong>
+    </a>
+    <span class="divider"></span>
+    <h1>AI 回答比较</h1>
+    <div class="header-actions">
+      <span id="answerCount" class="answer-count"></span>
+      <button id="closeButton" type="button" aria-label="关闭比较页">关闭</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="questionPanel" class="question-panel" hidden>
+      <span>原问题</span>
+      <p id="questionText"></p>
+    </section>
+    <section id="comparisonGrid" class="comparison-grid" aria-live="polite"></section>
+    <section id="emptyState" class="empty-state" hidden>
+      <img src="assets/logo.svg" alt="">
+      <h2>暂时无法打开比较结果</h2>
+      <p id="emptyMessage">对应的聊天或回答可能已经被删除。</p>
+    </section>
+  </main>
+</body>
+</html>

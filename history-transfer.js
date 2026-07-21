@@ -30,9 +30,12 @@
       const end = headers[index + 1]?.index ?? block.length;
       let content = block.slice(header.end, end).replace(/^\n+/, "").replace(/\n+$/, "");
       if (index === headers.length - 1) content = content.replace(/\n---\s*$/, "").replace(/\n+$/, "");
-      const attachmentPattern = /\n*>\s*此轮包含图片或附件；附件文件本身未保存在聊天历史中。\s*$/;
-      const hadAttachments = attachmentPattern.test(content);
-      content = content.replace(attachmentPattern, "").trim();
+      const attachmentPattern = /\n*>\s*(?:此轮包含图片或附件；附件文件本身未保存在聊天历史中。|此轮包含 \d+ 张保存在浏览器本地的图片预览；Markdown 导出不内嵌图片数据。|此轮包含 \d+ 张图片；本地预览已因空间预算移除。|此轮包含附件；附件文件本身未写入 Markdown 导出。)\s*$/;
+      let hadAttachments = false;
+      while (attachmentPattern.test(content)) {
+        hadAttachments = true;
+        content = content.replace(attachmentPattern, "").trim();
+      }
       if (content === "（空消息）") content = "";
       return {
         id: makeId("message", `${conversationIndex}-${index}`),

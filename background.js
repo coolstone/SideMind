@@ -95,7 +95,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: "拒绝了非扩展页面发起的模型请求" });
       return false;
     }
-    callModel(message.payload, message.requestId)
+    callModel(message.payload, message.requestId, message.profileId)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((error) => sendResponse({ ok: false, error: readableError(error), cancelled: error?.code === "USER_CANCELLED" }));
     return true;
@@ -360,7 +360,7 @@ async function importChatGPTResponse(text, panelPromise) {
   return { panelOpened: panelResult.status === "fulfilled" };
 }
 
-async function callModel(payload, requestedId) {
+async function callModel(payload, requestedId, requestedProfileId) {
   const controller = new AbortController();
   const requestId = String(requestedId || crypto.randomUUID());
   const requestState = { controller, userCancelled: false };
@@ -372,7 +372,7 @@ async function callModel(payload, requestedId) {
   let rawText;
   try {
     const { settings: stored = {} } = await chrome.storage.local.get("settings");
-    const settings = resolveModelSettings(stored);
+    const settings = resolveModelSettings(stored, requestedProfileId);
     provider = String(settings.provider || "").toLowerCase();
     if (requestState.userCancelled) {
       const cancelledError = new Error("模型请求已由用户停止");
@@ -434,10 +434,11 @@ async function callModel(payload, requestedId) {
   return { text, usage: data.usage || null, responseId: data.id || null };
 }
 
-function resolveModelSettings(stored) {
+function resolveModelSettings(stored, requestedProfileId = "") {
   const merged = { ...DEFAULT_SETTINGS, ...stored };
   const profiles = Array.isArray(stored.modelProfiles) ? stored.modelProfiles : [];
-  const active = profiles.find((profile) => profile.id === stored.activeProfileId);
+  const active = profiles.find((profile) => profile.id === (requestedProfileId || stored.activeProfileId));
+  if (requestedProfileId && !active) throw new Error("指定的模型配置不存在，请在设置中重新选择");
   return active ? { ...merged, ...active, connectionMode: stored.connectionMode || merged.connectionMode } : merged;
 }
 

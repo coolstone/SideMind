@@ -115,6 +115,14 @@ assert.equal(userCancelledError, "已停止生成");
 assert.equal(evaluate(`buildEndpoint("http://192.168.110.4:11434", "chat", "ollama")`), "http://192.168.110.4:11434/v1/chat/completions");
 assert.equal(evaluate(`buildEndpoint("http://192.168.110.4:11434/v1", "chat", "ollama")`), "http://192.168.110.4:11434/v1/chat/completions");
 assert.equal(evaluate(`buildEndpoint("https://example.test/v1", "chat", "compatible")`), "https://example.test/v1/chat/completions");
+assert.equal(evaluate(`resolveModelSettings({
+  activeProfileId: "profile-a",
+  modelProfiles: [
+    { id: "profile-a", provider: "deepseek", model: "model-a" },
+    { id: "profile-b", provider: "ollama", model: "model-b", baseUrl: "http://127.0.0.1:11434" }
+  ]
+}, "profile-b").model`), "model-b", "a comparison request should resolve its requested model profile");
+assert.throws(() => evaluate(`resolveModelSettings({ modelProfiles: [] }, "missing-profile")`), /指定的模型配置不存在/);
 
 const cancelledRequest = evaluate(`callModel(
   { instructions: "system", prompt: "hello", imageDataUrls: [], reasoningEffort: "none" },
@@ -144,8 +152,9 @@ assert.equal(bridgeSendCount, 2, "a missing old content script should be retried
 assert.equal(bridgeInjectionCount, 1, "the current content script should be injected before retrying");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert.equal(manifest.version, "0.5.18");
+assert.equal(manifest.version, "0.5.20");
 assert.ok(manifest.permissions.includes("scripting"));
+assert.ok(manifest.permissions.includes("unlimitedStorage"));
 assert.ok(manifest.host_permissions.includes("<all_urls>"));
 assert.ok(manifest.content_scripts[0].matches.includes("file:///*"));
 assert.equal(manifest.icons["128"], "assets/logo-128.png");
@@ -175,6 +184,8 @@ assert.match(backgroundSource, /backupReminderPending/);
 assert.match(backgroundSource, /chrome\.runtime\.openOptionsPage/);
 assert.match(backgroundSource, /activeModelRequests/);
 assert.match(backgroundSource, /CANCEL_AI_REQUEST/);
+assert.match(backgroundSource, /callModel\(message\.payload, message\.requestId, message\.profileId\)/);
+assert.match(backgroundSource, /resolveModelSettings\(stored, requestedProfileId\)/);
 assert.match(backgroundSource, /OLLAMA_ORIGINS=chrome-extension:\/\/\*/);
 assert.match(backgroundSource, /provider === "ollama"/);
 assert.match(backgroundSource, /\/v1\/chat\/completions/);
@@ -205,7 +216,30 @@ assert.match(sidepanelSource, /function buildHistoryExportMarkdown/);
 assert.match(sidepanelSource, /async function importHistoryFile/);
 assert.match(sidepanelSource, /conversationImportKey/);
 assert.match(sidepanelSource, /SideMind-聊天历史-/);
-assert.match(sidepanelSource, /附件文件本身未保存在聊天历史中/);
+assert.match(sidepanelSource, /Markdown 导出不内嵌图片数据/);
+assert.match(sidepanelSource, /MAX_STORED_MESSAGE_IMAGE_BYTES/);
+assert.match(sidepanelSource, /MAX_STORED_CONVERSATION_IMAGE_BYTES/);
+assert.match(sidepanelSource, /async function createStoredMessageAttachments/);
+assert.match(sidepanelSource, /async function compressImageForHistory/);
+assert.match(sidepanelSource, /function createMessageAttachmentGallery/);
+assert.match(sidepanelSource, /function prepareMessagesForStorage/);
+assert.match(sidepanelSource, /data-message-image/);
+assert.match(sidepanelSource, /attachments: messageAttachments/);
+assert.match(sidepanelSource, /const replayImages = getImageDataUrls/);
+assert.match(sidepanelSource, /function createComparisonControls/);
+assert.match(sidepanelSource, /function createComparisonNavigator/);
+assert.match(sidepanelSource, /function visibleAnswerMessage/);
+assert.match(sidepanelSource, /function activeAnswerIndexFor/);
+assert.match(sidepanelSource, /async function switchComparisonAnswer/);
+assert.match(sidepanelSource, /async function fetchAlternativeAnswer/);
+assert.match(sidepanelSource, /async function openComparisonPage/);
+assert.match(sidepanelSource, /dataset\.compareProfileId/);
+assert.match(sidepanelSource, /dataset\.comparisonStep/);
+assert.match(sidepanelSource, /aria-label", "并排比较"/);
+assert.match(sidepanelSource, /navigator\.clipboard\.writeText\(visibleMessage\.content\)/);
+assert.match(sidepanelSource, /sourceMessage\.comparisons/);
+assert.match(sidepanelSource, /profileId,/);
+assert.match(sidepanelSource, /requestPrompt: prompt/);
 assert.match(sidepanelSource, /function bindControlTooltips/);
 assert.match(sidepanelSource, /function applyFontSize/);
 assert.match(sidepanelSource, /function beginModelRequest/);
@@ -316,6 +350,28 @@ assert.equal(importedHistory.conversations[0].messages.length, 2);
 assert.equal(importedHistory.conversations[0].messages[1].modelName, "deepseek-v4-flash");
 assert.equal(importedHistory.conversations[0].url, "https://example.com/");
 
+const importedImageHistory = historyTransferContext.SideMindHistory.parseHistoryMarkdown(`# SideMind 聊天历史：图片空间
+
+- 导出时间：2026/7/20 14:00:00
+- 会话数量：1
+
+---
+
+## 1. 图片问答
+
+- 创建时间：2026/7/20 13:40:00
+- 更新时间：2026/7/20 13:41:00
+
+### 用户 · 2026/7/20 13:40:00
+
+读取图片
+
+> 此轮包含 1 张保存在浏览器本地的图片预览；Markdown 导出不内嵌图片数据。
+
+---`);
+assert.equal(importedImageHistory.conversations[0].messages[0].content, "读取图片");
+assert.equal(importedImageHistory.conversations[0].messages[0].hadAttachments, true);
+
 const promptLibrarySource = fs.readFileSync(path.join(root, "prompt-library.js"), "utf8");
 const promptLibraryContext = vm.createContext({});
 new vm.Script(`${promptLibrarySource}\n;globalThis.__promptLibrary = { DEFAULT_PROMPTS, PROMPT_LIBRARY_VERSION, mergePromptLibrary };`).runInContext(promptLibraryContext);
@@ -399,6 +455,13 @@ assert.match(sidepanelStyle, /data-font-size="compact"/);
 assert.match(sidepanelStyle, /data-font-size="large"/);
 assert.match(sidepanelStyle, /data-font-size="extra_large"/);
 assert.match(sidepanelStyle, /\.message-bubble,[\s\S]*\.composer textarea \{ font-size: var\(--font-base\); \}/);
+assert.match(sidepanelStyle, /\.message-attachments/);
+assert.match(sidepanelStyle, /\.message-image-button\.is-expanded/);
+assert.match(sidepanelStyle, /\.comparison-controls/);
+assert.match(sidepanelStyle, /\.comparison-model-menu/);
+assert.match(sidepanelStyle, /\.comparison-navigator/);
+assert.match(sidepanelStyle, /\.comparison-parallel-button::after/);
+assert.match(sidepanelStyle, /content:attr\(aria-label\)/);
 const promptsSource = fs.readFileSync(path.join(root, "prompts.js"), "utf8");
 assert.match(promptsSource, /async function movePrompt/);
 assert.match(promptsSource, /function handleDragStart/);
@@ -442,5 +505,20 @@ assert.match(artifactSource, /Content-Security-Policy/);
 assert.match(artifactSource, /default-src 'none'/);
 assert.match(artifactSource, /chrome\.storage\.local/);
 assert.match(artifactSource, /function downloadArtifact/);
+
+const compareHtml = fs.readFileSync(path.join(root, "compare.html"), "utf8");
+const compareSource = fs.readFileSync(path.join(root, "compare.js"), "utf8");
+const compareStyle = fs.readFileSync(path.join(root, "compare.css"), "utf8");
+assert.match(compareHtml, /AI 回答比较/);
+assert.match(compareHtml, /id="comparisonGrid"/);
+assert.match(compareSource, /chrome\.storage\.local\.get\("conversations"\)/);
+assert.match(compareSource, /source\.comparisons/);
+assert.match(compareSource, /navigator\.clipboard\.writeText/);
+assert.match(compareSource, /function renderMarkdown/);
+assert.match(compareSource, /escapeHtml\(markdown\)/);
+assert.match(compareStyle, /grid-auto-flow:column/);
+assert.match(compareStyle, /\.answer-card\.is-primary/);
+assert.match(usageGuide, /从其他模型获取答案并比较/);
+assert.match(usageGuide, /每个替代答案都是一次单独的模型请求/);
 
 console.log("SideMind regression checks: OK");
