@@ -117,6 +117,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message?.type === "GET_PROVIDER_BALANCE") {
+    if (!isTrustedExtensionSender(sender)) {
+      sendResponse({ ok: false, error: "拒绝了非扩展页面发起的余额查询" });
+      return false;
+    }
+    getProviderBalance(message.profileId)
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((error) => sendResponse({ ok: false, error: readableError(error) }));
+    return true;
+  }
+
   if (message?.type === "CAPTURE_TAB") {
     if (!isTrustedExtensionSender(sender)) {
       sendResponse({ ok: false, error: "没有截图权限" });
@@ -431,7 +442,51 @@ async function callModel(payload, requestedId, requestedProfileId) {
 
   const text = mode === "responses" ? extractResponseText(data) : extractChatText(data);
   if (!text) throw new Error("模型没有返回可显示的文本");
-  return { text, usage: data.usage || null, responseId: data.id || null };
+  return { text, usage: data.usage || extractOllamaUsage(data), responseId: data.id || null };
+}
+
+async function getProviderBalance(requestedProfileId = "") {
+  const { settings: stored = {} } = await chrome.storage.local.get("settings");
+  const settings = resolveModelSettings(stored, requestedProfileId);
+  if (String(settings.provider || "").toLowerCase() !== "deepseek") {
+    throw new Error("当前服务商没有配置官方余额查询接口");
+  }
+  if (!settings.apiKey) throw new Error("请先在设置中填写 DeepSeek API Key");
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(buildDeepSeekBalanceEndpoint(), {
+      headers: { Accept: "application/json", Authorization: `Bearer ${settings.apiKey}` },
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.error?.message || data?.message || `余额查询失败（HTTP ${response.status}）`);
+    if (!Array.isArray(data?.balance_infos)) throw new Error("余额服务返回的数据格式无法识别");
+    return {
+      provider: "deepseek",
+      isAvailable: Boolean(data.is_available),
+      balances: data.balance_infos.map((item) => ({
+        currency: item.currency,
+        total: String(item.total_balance ?? "0"),
+        granted: String(item.granted_balance ?? "0"),
+        toppedUp: String(item.topped_up_balance ?? "0")
+      })),
+      checkedAt: Date.now()
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function buildDeepSeekBalanceEndpoint() {
+  return "https://api.deepseek.com/user/balance";
+}
+
+function extractOllamaUsage(data) {
+  const input = Number(data?.prompt_eval_count || 0);
+  const output = Number(data?.eval_count || 0);
+  if (!input && !output) return null;
+  return { prompt_tokens: input, completion_tokens: output, total_tokens: input + output };
 }
 
 function resolveModelSettings(stored, requestedProfileId = "") {

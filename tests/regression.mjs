@@ -115,6 +115,12 @@ assert.equal(userCancelledError, "已停止生成");
 assert.equal(evaluate(`buildEndpoint("http://192.168.110.4:11434", "chat", "ollama")`), "http://192.168.110.4:11434/v1/chat/completions");
 assert.equal(evaluate(`buildEndpoint("http://192.168.110.4:11434/v1", "chat", "ollama")`), "http://192.168.110.4:11434/v1/chat/completions");
 assert.equal(evaluate(`buildEndpoint("https://example.test/v1", "chat", "compatible")`), "https://example.test/v1/chat/completions");
+assert.equal(evaluate(`buildDeepSeekBalanceEndpoint()`), "https://api.deepseek.com/user/balance");
+const ollamaUsage = evaluate(`extractOllamaUsage({ prompt_eval_count: 17, eval_count: 9 })`);
+assert.equal(ollamaUsage.prompt_tokens, 17, "native Ollama input counters should normalize to API usage");
+assert.equal(ollamaUsage.completion_tokens, 9, "native Ollama output counters should normalize to API usage");
+assert.equal(ollamaUsage.total_tokens, 26, "native Ollama total counters should normalize to API usage");
+assert.equal(evaluate(`extractOllamaUsage({})`), null);
 assert.equal(evaluate(`resolveModelSettings({
   activeProfileId: "profile-a",
   modelProfiles: [
@@ -152,7 +158,7 @@ assert.equal(bridgeSendCount, 2, "a missing old content script should be retried
 assert.equal(bridgeInjectionCount, 1, "the current content script should be injected before retrying");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert.equal(manifest.version, "0.5.28");
+assert.equal(manifest.version, "0.5.29");
 assert.ok(manifest.permissions.includes("scripting"));
 assert.ok(manifest.permissions.includes("clipboardWrite"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));

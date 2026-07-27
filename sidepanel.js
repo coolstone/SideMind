@@ -40,6 +40,7 @@ const DEFAULT_UI_SETTINGS = {
   provider: "openai",
   model: "gpt-5.6-terra",
   apiKey: "",
+  tokenBudget: 0,
   responseLanguage: "简体中文",
   startupBehavior: "restore_last",
   fontSizeScale: "comfortable",
@@ -103,7 +104,9 @@ const state = {
   shareFormat: "image",
   sharePreviewToken: 0,
   sharePreviewAsset: null,
-  sharePreviewObjectUrl: ""
+  sharePreviewObjectUrl: "",
+  balanceRefreshPromise: null,
+  balanceRefreshKey: ""
 };
 
 const ui = Object.fromEntries([
@@ -270,6 +273,7 @@ async function loadSettings() {
     await chrome.storage.local.set({ settings: migrated });
   }
   updateModeUI();
+  await updateTokenBalance();
 }
 
 async function loadLibraryData() {
@@ -327,6 +331,7 @@ function ensureModelProfiles(settings) {
     baseUrl: settings.baseUrl || "https://api.openai.com/v1",
     model: settings.model,
     apiKey: settings.apiKey,
+    tokenBudget: Math.max(0, Number(settings.tokenBudget) || 0),
     maxOutputTokens: settings.maxOutputTokens || 1800
   };
   const profiles = mergeBuiltInModelProfiles([profile], 0);
@@ -360,6 +365,123 @@ function normalizeProfileProvider(profile) {
 
 function providerCredentialKey(profile) {
   return `${profile.provider || "compatible"}|${String(profile.baseUrl || "").replace(/\/+$/, "").toLowerCase()}`;
+}
+
+function activeModelProfile() {
+  return state.settings?.modelProfiles?.find((profile) => profile.id === state.settings?.activeProfileId)
+    || state.settings
+    || null;
+}
+
+function normalizeTokenUsage(usage) {
+  if (!usage || typeof usage !== "object") return 0;
+  const total = Number(usage.total_tokens ?? usage.totalTokens);
+  if (Number.isFinite(total) && total > 0) return Math.floor(total);
+  const input = Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.prompt_eval_count ?? 0);
+  const output = Number(usage.completion_tokens ?? usage.output_tokens ?? usage.eval_count ?? 0);
+  const sum = input + output;
+  return Number.isFinite(sum) && sum > 0 ? Math.floor(sum) : 0;
+}
+
+function formatTokenCount(value) {
+  const tokens = Math.max(0, Number(value) || 0);
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(tokens >= 10000000 ? 0 : 1)}M`;
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(tokens >= 10000 ? 0 : 1)}k`;
+  return String(Math.floor(tokens));
+}
+
+async function recordTokenUsage(usage, profile = activeModelProfile()) {
+  const used = normalizeTokenUsage(usage);
+  if (!used || !profile) return;
+  const key = providerCredentialKey(profile);
+  const { tokenUsageLedger = {} } = await chrome.storage.local.get("tokenUsageLedger");
+  const prior = tokenUsageLedger[key] || {};
+  const ledger = {
+    ...tokenUsageLedger,
+    [key]: {
+      usedTokens: Math.max(0, Number(prior.usedTokens) || 0) + used,
+      lastRequestTokens: used,
+      updatedAt: Date.now()
+    }
+  };
+  await chrome.storage.local.set({ tokenUsageLedger: ledger });
+  await updateTokenBalance();
+}
+
+function renderTokenBalance(text, { low = false, title = "" } = {}) {
+  state.tokenBalance = { text, low, title };
+  if (!ui.modelPopover.hidden) renderModelProfiles();
+}
+
+function formatCurrencyBalance(value, currency) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return `${currency || ""} ${value}`.trim();
+  const symbol = currency === "CNY" ? "¥" : currency === "USD" ? "$" : `${currency || ""} `;
+  return `${symbol}${amount.toFixed(2)}`;
+}
+
+async function updateTokenBalance({ refresh = true } = {}) {
+  const profile = activeModelProfile();
+  const budget = Math.max(0, Number(profile?.tokenBudget) || 0);
+  if (state.settings?.connectionMode === "chatgpt_web" || !profile) {
+    state.tokenBalance = null;
+    if (!ui.modelPopover.hidden) renderModelProfiles();
+    return;
+  }
+  if (String(profile.provider || "").toLowerCase() === "deepseek") {
+    const key = providerCredentialKey(profile);
+    const { providerBalances = {} } = await chrome.storage.local.get("providerBalances");
+    const balance = providerBalances[key];
+    if (balance?.provider === "deepseek" && Array.isArray(balance.balances)) {
+      const amount = balance.balances.map((item) => formatCurrencyBalance(item.total, item.currency)).join(" · ");
+      const granted = balance.balances
+        .filter((item) => Number(item.granted) > 0)
+        .map((item) => `赠金 ${formatCurrencyBalance(item.granted, item.currency)}`)
+        .join(" · ");
+      renderTokenBalance(`DeepSeek 余额：${amount}${granted ? `（${granted}）` : ""}`, {
+        low: !balance.isAvailable || balance.balances.every((item) => Number(item.total) <= 0),
+        title: `官方实时余额，最近查询：${new Date(balance.checkedAt).toLocaleTimeString()}；点击刷新`
+      });
+    } else {
+      renderTokenBalance("DeepSeek 余额：正在读取官方余额…", { title: "点击重新查询" });
+    }
+    if (refresh) refreshDeepSeekBalance(profile).catch((error) => {
+      renderTokenBalance(`DeepSeek 余额：查询失败（${error.message}）`, { low: true, title: "点击重试" });
+    });
+    return;
+  }
+  if (!budget) {
+    state.tokenBalance = null;
+    if (!ui.modelPopover.hidden) renderModelProfiles();
+    return;
+  }
+  const { tokenUsageLedger = {} } = await chrome.storage.local.get("tokenUsageLedger");
+  const entry = tokenUsageLedger[providerCredentialKey(profile)] || {};
+  const used = Math.max(0, Number(entry.usedTokens) || 0);
+  const remaining = Math.max(0, budget - used);
+  renderTokenBalance(`Token 余额：${formatTokenCount(remaining)} · 已用 ${formatTokenCount(used)} / ${formatTokenCount(budget)}（本地统计）`, {
+    low: remaining / budget <= 0.1,
+    title: "由接口返回的 usage 本地累计；不代表服务商实时账单余额。"
+  });
+}
+
+async function refreshDeepSeekBalance(profile) {
+  const key = providerCredentialKey(profile);
+  if (state.balanceRefreshPromise && state.balanceRefreshKey === key) return state.balanceRefreshPromise;
+  state.balanceRefreshKey = key;
+  state.balanceRefreshPromise = chrome.runtime.sendMessage({ type: "GET_PROVIDER_BALANCE", profileId: profile.id })
+    .then(async (response) => {
+      if (!response?.ok) throw new Error(response?.error || "余额查询失败");
+      const { providerBalances = {} } = await chrome.storage.local.get("providerBalances");
+      await chrome.storage.local.set({ providerBalances: { ...providerBalances, [key]: response.result } });
+      await updateTokenBalance({ refresh: false });
+      return response.result;
+    })
+    .finally(() => {
+      state.balanceRefreshPromise = null;
+      state.balanceRefreshKey = "";
+    });
+  return state.balanceRefreshPromise;
 }
 
 function applyFontSize(value) {
@@ -586,6 +708,7 @@ async function performRequest({ displayText, taskPrompt }) {
       modelProfileId: state.settings?.activeProfileId || "",
       reasoningEffort: state.reasoningEffort
     });
+    await recordTokenUsage(response.result.usage);
     clearAttachments();
     await saveConversation();
   } catch (error) {
@@ -1402,6 +1525,7 @@ async function fetchAlternativeAnswer(sourceMessage, profileId, triggerButton) {
     const existing = Array.isArray(sourceMessage.comparisons) ? sourceMessage.comparisons : [];
     sourceMessage.comparisons = [...existing.filter((item) => item.profileId !== profileId), comparison];
     sourceMessage.comparisonActiveIndex = sourceMessage.comparisons.findIndex((item) => item.id === comparison.id) + 1;
+    await recordTokenUsage(response.result.usage, profile);
     const oldElement = ui.messageList.querySelector(`[data-message-id="${sourceMessage.id}"]`);
     oldElement?.replaceWith(createMessageElement(sourceMessage));
     await saveConversation();
@@ -1468,6 +1592,7 @@ async function regenerateAssistantMessage(message) {
     message.reasoningEffort = state.reasoningEffort;
     message.comparisons = [];
     message.comparisonActiveIndex = 0;
+    await recordTokenUsage(response.result.usage);
     const oldElement = ui.messageList.querySelector(`[data-message-id="${message.id}"]`);
     oldElement?.replaceWith(createMessageElement(message));
     await saveConversation();
@@ -2721,7 +2846,10 @@ function togglePopover(type) {
   closePopovers();
   if (!opening) return;
   target.hidden = false;
-  if (type === "model") renderModelProfiles();
+  if (type === "model") {
+    renderModelProfiles();
+    updateTokenBalance({ refresh: true }).catch(() => {});
+  }
   if (type === "prompt") {
     ui.promptSearchInput.value = "";
     renderPromptList();
@@ -2777,7 +2905,26 @@ function renderModelProfiles() {
     group.className = "model-provider-group";
     const heading = document.createElement("div");
     heading.className = "model-provider-heading";
-    heading.innerHTML = `<span>${providerIcon(provider)}</span><strong>${escapeHtml(providerLabel(provider))}</strong><small>${providerProfiles.length} 个模型</small>`;
+    const icon = document.createElement("span");
+    icon.className = "provider-icon";
+    icon.textContent = providerIcon(provider);
+    const name = document.createElement("strong");
+    name.textContent = providerLabel(provider);
+    const meta = document.createElement("span");
+    meta.className = "provider-heading-meta";
+    const count = document.createElement("small");
+    count.textContent = `${providerProfiles.length} 个模型`;
+    meta.appendChild(count);
+    if (provider === "deepseek") {
+      const balance = document.createElement("button");
+      balance.type = "button";
+      balance.className = `model-provider-balance${state.tokenBalance?.low ? " is-low" : ""}`;
+      balance.textContent = state.tokenBalance?.text?.replace(/^DeepSeek 余额：/, "") || "读取余额…";
+      balance.title = state.tokenBalance?.title || "点击查询 DeepSeek 官方余额";
+      balance.addEventListener("click", () => updateTokenBalance({ refresh: true }));
+      meta.appendChild(balance);
+    }
+    heading.append(icon, name, meta);
     group.appendChild(heading);
     for (const profile of providerProfiles) {
       const button = document.createElement("button");

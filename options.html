@@ -109,6 +109,16 @@
             </div>
             <small id="apiKeyHint">保存后应用到当前服务商下的全部模型，不需要为每个模型重复填写。</small>
           </label>
+
+          <label>
+            <span>其他服务商 Token 预算（可选）</span>
+            <input id="tokenBudget" name="tokenBudget" type="number" min="0" step="1" value="0" inputmode="numeric" />
+            <small>DeepSeek 会自动显示官方实时人民币/美元余额，无需填写。其他服务商如未提供余额接口，可填写 Token 总额，由 SideMind 按接口返回的实际用量本地扣减。填 0 表示不追踪。</small>
+          </label>
+          <div class="token-budget-actions">
+            <button id="resetTokenUsageButton" type="button">重置本地已用量</button>
+            <small>充值或希望以当前余额重新开始统计时使用；不会影响聊天记录、API Key 或服务商账户。</small>
+          </div>
         </section>
 
         <section class="settings-card api-only">
@@ -160,7 +170,7 @@
 
           <div class="backup-summary">
             <strong>备份内容</strong>
-            <p>模型配置、响应语言、启动偏好、提示词、聊天空间、聊天历史和本地工件。备份文件只保存在你选择的本地目录，不会上传。</p>
+            <p>模型配置、响应语言、启动偏好、提示词、聊天空间、聊天历史、本地工件和 Token 用量统计。备份文件只保存在你选择的本地目录，不会上传。</p>
           </div>
 
           <label class="backup-secret-option">

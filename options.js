@@ -2,7 +2,7 @@ const DEFAULTS = {
   connectionMode: "api", provider: "openai", apiMode: "responses",
   baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra",
   apiKey: "", maxOutputTokens: 1800, language: "zh-CN", responseLanguage: "简体中文", startupBehavior: "restore_last",
-  fontSizeScale: "comfortable", activeProfileId: "default", modelProfiles: [], modelProfileLibraryVersion: 0
+  fontSizeScale: "comfortable", activeProfileId: "default", modelProfiles: [], modelProfileLibraryVersion: 0, tokenBudget: 0
 };
 
 const MODEL_PROFILE_LIBRARY_VERSION = 3;
@@ -33,7 +33,7 @@ const form = document.getElementById("settingsForm");
 const fields = {
   connectionMode: document.getElementById("connectionMode"), responseLanguage: document.getElementById("responseLanguage"), startupBehavior: document.getElementById("startupBehavior"), fontSizeScale: document.getElementById("fontSizeScale"), profileSelect: document.getElementById("profileSelect"), profileName: document.getElementById("profileName"),
   provider: document.getElementById("provider"), apiMode: document.getElementById("apiMode"), baseUrl: document.getElementById("baseUrl"),
-  apiKey: document.getElementById("apiKey"), modelPreset: document.getElementById("modelPreset"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens")
+  apiKey: document.getElementById("apiKey"), tokenBudget: document.getElementById("tokenBudget"), modelPreset: document.getElementById("modelPreset"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens")
 };
 const statusText = document.getElementById("statusText");
 const testButton = document.getElementById("testButton");
@@ -43,6 +43,7 @@ const deleteProfileButton = document.getElementById("deleteProfileButton");
 const connectionModeHint = document.getElementById("connectionModeHint");
 const tokenHint = document.getElementById("tokenHint");
 const apiKeyHint = document.getElementById("apiKeyHint");
+const resetTokenUsageButton = document.getElementById("resetTokenUsageButton");
 const securityTitle = document.getElementById("securityTitle");
 const securityDescription = document.getElementById("securityDescription");
 const backupInstallNotice = document.getElementById("backupInstallNotice");
@@ -55,7 +56,7 @@ const backupStatus = document.getElementById("backupStatus");
 
 const BACKUP_FORMAT = "sidemind-local-backup";
 const BACKUP_VERSION = 1;
-const BACKUP_STORAGE_KEYS = ["settings", "prompts", "promptLibraryVersion", "spaces", "conversations", "uiPreferences", "localArtifacts"];
+const BACKUP_STORAGE_KEYS = ["settings", "prompts", "promptLibraryVersion", "spaces", "conversations", "uiPreferences", "localArtifacts", "tokenUsageLedger", "providerBalances"];
 
 init();
 
@@ -125,7 +126,7 @@ function providerCredentialKey(profile) {
 }
 
 function profileFromValues(id, name, values) {
-  return { id, name, provider: values.provider, apiMode: values.apiMode, baseUrl: values.baseUrl, apiKey: values.apiKey, model: values.model, maxOutputTokens: Number(values.maxOutputTokens) || DEFAULTS.maxOutputTokens };
+  return { id, name, provider: values.provider, apiMode: values.apiMode, baseUrl: values.baseUrl, apiKey: values.apiKey, tokenBudget: Math.max(0, Number(values.tokenBudget) || 0), model: values.model, maxOutputTokens: Number(values.maxOutputTokens) || DEFAULTS.maxOutputTokens };
 }
 
 function renderProfileSelect() {
@@ -147,7 +148,7 @@ function loadProfile(profileId) {
   state.activeProfileId = profile.id;
   state.currentProvider = profile.provider;
   fields.profileSelect.value = profile.id;
-  for (const key of ["profileName","provider","apiMode","baseUrl","apiKey","maxOutputTokens"]) {
+  for (const key of ["profileName","provider","apiMode","baseUrl","apiKey","tokenBudget","maxOutputTokens"]) {
     fields[key].value = key === "profileName" ? profile.name : profile[key];
   }
   fields.model.value = profile.model || "";
@@ -184,6 +185,7 @@ exportBackupButton.addEventListener("click", exportLocalBackup);
 importBackupButton.addEventListener("click", () => backupFileInput.click());
 backupFileInput.addEventListener("change", importLocalBackup);
 dismissBackupNoticeButton.addEventListener("click", dismissBackupNotice);
+resetTokenUsageButton.addEventListener("click", resetTokenUsage);
 
 function createProfile() {
   snapshotCurrentProfile();
@@ -204,7 +206,8 @@ async function deleteProfile() {
 function updateModeSections() {
   const webMode = fields.connectionMode.value === "chatgpt_web";
   for (const node of document.querySelectorAll(".api-only")) node.hidden = webMode;
-  for (const field of [fields.profileSelect,fields.profileName,fields.provider,fields.apiMode,fields.baseUrl,fields.apiKey,fields.modelPreset,fields.model,fields.maxOutputTokens]) field.disabled = webMode;
+  for (const field of [fields.profileSelect,fields.profileName,fields.provider,fields.apiMode,fields.baseUrl,fields.apiKey,fields.tokenBudget,fields.modelPreset,fields.model,fields.maxOutputTokens]) field.disabled = webMode;
+  resetTokenUsageButton.disabled = webMode;
   fields.profileName.required = !webMode; fields.baseUrl.required = !webMode; fields.model.required = !webMode; fields.maxOutputTokens.required = !webMode;
   document.querySelector(".settings-card:not(.api-only)")?.classList.toggle("is-web-mode", webMode);
   connectionModeHint.textContent = webMode ? "把网页上下文写入正常的 chatgpt.com 输入框，由你检查并手动发送；之后可同步页面上可见的最新回答。" : "直接请求你配置的模型服务，回答会自动返回 SideMind。";
@@ -281,11 +284,25 @@ async function saveSettings() {
 
 function snapshotCurrentProfile({ provider = state.currentProvider } = {}) {
   if (!state.activeProfileId || !fields.profileName.value) return;
-  const sharedConnection = { provider, apiMode:fields.apiMode.value, baseUrl:fields.baseUrl.value.trim().replace(/\/+$/, ""), apiKey:fields.apiKey.value.trim() };
+  const sharedConnection = { provider, apiMode:fields.apiMode.value, baseUrl:fields.baseUrl.value.trim().replace(/\/+$/, ""), apiKey:fields.apiKey.value.trim(), tokenBudget:Math.max(0, Number(fields.tokenBudget.value) || 0) };
   const nextProfile = profileFromValues(state.activeProfileId, fields.profileName.value.trim(), { ...sharedConnection, model:fields.model.value.trim(), maxOutputTokens:Number(fields.maxOutputTokens.value) || DEFAULTS.maxOutputTokens });
   state.profiles = state.profiles.map((profile) => profile.provider === provider ? { ...profile, ...sharedConnection } : profile);
   const index = state.profiles.findIndex((item) => item.id === state.activeProfileId);
   if (index >= 0) state.profiles[index] = nextProfile; else state.profiles.push(nextProfile);
+}
+
+async function resetTokenUsage() {
+  const profile = { provider: fields.provider.value, baseUrl: fields.baseUrl.value.trim().replace(/\/+$/, "") };
+  const label = providerLabel(profile.provider);
+  if (!window.confirm(`重置 ${label} 的本地 Token 已用量？这不会修改服务商账户余额。`)) return;
+  const key = providerCredentialKey(profile);
+  const { tokenUsageLedger = {} } = await chrome.storage.local.get("tokenUsageLedger");
+  if (key in tokenUsageLedger) {
+    const next = { ...tokenUsageLedger };
+    delete next[key];
+    await chrome.storage.local.set({ tokenUsageLedger: next });
+  }
+  setStatus("本地 Token 已用量已重置；保存后侧边栏会按当前预算重新计算余额。", "success");
 }
 
 function providerLabel(value) { return ({openai:"OpenAI",deepseek:"DeepSeek",ollama:"Ollama",openrouter:"OpenRouter",compatible:"兼容服务"})[value] || value; }

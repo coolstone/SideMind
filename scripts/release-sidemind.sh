@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# 用法：./scripts/release-sidemind.sh "提交说明" v0.5.28 "Tag 说明"
+# 用法：./scripts/release-sidemind.sh "提交说明" v0.5.29 "Tag 说明"
 # 只提交已跟踪文件，避免把本地 ZIP、临时目录或个人草稿带入 GitHub。
 set -euo pipefail
 
@@ -11,7 +11,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 case "$tag_name" in
   v[0-9]*.*.*) ;;
-  *) echo "版本 Tag 应采用 v0.0.0 格式，例如 v0.5.28" >&2; exit 1 ;;
+  *) echo "版本 Tag 应采用 v0.0.0 格式，例如 v0.5.29" >&2; exit 1 ;;
 esac
 
 cd "$repo_root"

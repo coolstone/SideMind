@@ -42,6 +42,10 @@ label small { color: var(--muted); font-size: 9px; }
 code { padding: 1px 4px; border-radius: 4px; background: #efedf3; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .password-field { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .password-field button { padding: 0 13px; border: 1px solid var(--line); border-radius: 11px; background: #f7f5fa; color: var(--muted); font-size: 10px; cursor: pointer; }
+.token-budget-actions { display:flex; align-items:center; gap:10px; margin-top:8px; }
+.token-budget-actions button { height:32px; padding:0 11px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--muted); font-size:10px; font-weight:700; cursor:pointer; }
+.token-budget-actions button:hover { border-color:#cfc5f3; color:var(--brand); }
+.token-budget-actions small { color:var(--muted); font-size:9px; line-height:1.45; }
 .backup-install-notice { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:16px; padding:13px 14px; border:1px solid #d6cdf8; border-radius:13px; background:#f2efff; }
 .backup-install-notice strong,.backup-summary strong,.backup-secret-option strong { font-size:11px; }
 .backup-install-notice p,.backup-summary p { margin:4px 0 0; color:var(--muted); font-size:10px; line-height:1.6; }
