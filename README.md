@@ -202,7 +202,7 @@ node tests/regression.mjs
 
 ### 一条命令发布
 
-在已经完成 GitHub 登录后，可用下面一条命令完成语法/回归检查、暂存已跟踪改动、提交、创建带说明的 Tag，并以普通 fast-forward 推送到 `origin/main`：
+在已经完成 GitHub 登录后，可用下面一条命令完成语法/回归检查、暂存已跟踪改动、提交、创建带说明的 Tag，并以普通 fast-forward 推送到 `origin/main`。推送成功后，脚本会从该 Tag 自动生成本地安装包 `SideMind-vX.Y.Z.zip`；ZIP 不提交到仓库：
 
 ```bash
 ./scripts/release-sidemind.sh "PDF 阅读与可复核问答" v0.5.30 "本地 PDF.js 解析、页码范围精读、[p. N] 引用复核，以及扫描件视觉页限制。"

@@ -2,12 +2,34 @@
 
 # 用法：./scripts/release-sidemind.sh "提交说明" v0.5.30 "Tag 说明"
 # 只提交已跟踪文件，避免把本地 ZIP、临时目录或个人草稿带入 GitHub。
+# 发布成功后从 Git Tag 自动生成可安装的 SideMind-vX.Y.Z.zip（ZIP 不入库）。
 set -euo pipefail
 
 commit_message="${1:?请提供提交说明}"
 tag_name="${2:?请提供版本 Tag，例如 v0.5.28}"
 tag_notes="${3:-$commit_message}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+package_extension() {
+  local zip_path="SideMind-${tag_name}.zip"
+  local temporary_zip="${zip_path}.tmp"
+  local -a package_paths=(
+    manifest.json background.js content.js
+    sidepanel.html sidepanel.css sidepanel.js
+    options.html options.css options.js
+    prompts.html prompts.css prompts.js
+    artifact.html artifact.css artifact.js
+    compare.html compare.css compare.js
+    history-transfer.js prompt-library.js template-variables.js pdf-context.js sider-prompt-captures.json
+    assets vendor
+    README.md "SideMind-使用与扩展指南.md"
+  )
+
+  rm -f "$temporary_zip"
+  git archive --format=zip --output="$temporary_zip" "$tag_name" -- "${package_paths[@]}"
+  mv -f "$temporary_zip" "$zip_path"
+  echo "已生成本地安装包：${repo_root}/${zip_path}"
+}
 
 case "$tag_name" in
   v[0-9]*.*.*) ;;
@@ -39,5 +61,6 @@ git tag -a "$tag_name" -m "$tag_notes"
 # 只允许普通 fast-forward 推送到主分支，绝不强推。
 git push origin HEAD:main
 git push origin "$tag_name"
+package_extension
 
 echo "已发布 ${tag_name} 到 origin/main。"
