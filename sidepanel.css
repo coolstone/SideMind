@@ -171,10 +171,18 @@ button { color: inherit; }
 .action-icon.orange { color: #b36b22; background: #fff1df; }
 .action-icon.pink { color: #b74d78; background: #fdeaf2; }
 .action-arrow { color: #8b8495; }
-.selection-hint { display: inline-flex; align-items: center; gap: 7px; margin-top: 20px; padding: 7px 11px; border-radius: 99px; background: #efedf4; color: var(--muted); font-size: 9px; }
-.mouse-icon { color: var(--brand); font-weight: 800; }
-
 .chat-state { min-height: 100%; padding: 18px 14px 28px; }
+.conversation-rounds { position:sticky; z-index:12; top:8px; height:0; pointer-events:none; }
+.conversation-rounds-trigger { display:grid; place-items:center; width:30px; height:34px; padding:0; border:1px solid var(--line); border-radius:9px; background:rgba(255,255,255,.94); box-shadow:0 5px 16px rgba(37,31,63,.11); color:#777282; cursor:pointer; pointer-events:auto; }
+.conversation-rounds-trigger:hover,.conversation-rounds-trigger[aria-expanded="true"] { border-color:#c9bcfa; background:var(--brand-soft); color:var(--brand); }
+.conversation-rounds-trigger svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.8; }
+.conversation-rounds-menu { position:absolute; top:39px; left:0; display:grid; gap:3px; width:min(330px,calc(100vw - 64px)); max-height:min(320px,calc(100vh - 260px)); overflow:auto; padding:7px; border:1px solid var(--line); border-radius:15px; background:var(--surface); box-shadow:0 18px 42px rgba(38,32,64,.2); pointer-events:auto; }
+.conversation-round-item { display:grid; grid-template-columns:9px minmax(0,1fr); align-items:center; gap:8px; width:100%; min-height:33px; padding:7px 8px; border:0; border-radius:9px; background:transparent; color:var(--ink); cursor:pointer; text-align:left; }
+.conversation-round-item:hover,.conversation-round-item.is-current { background:var(--brand-soft); }
+.conversation-round-item i { width:8px; height:8px; border-radius:50%; background:#ddd9e5; }
+.conversation-round-item.is-current i { background:var(--brand); }
+.conversation-round-item span { overflow:hidden; color:#575260; font-size:10px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+.conversation-round-item.is-current span { color:#4f3fc0; font-weight:700; }
 .message-list { display: flex; flex-direction: column; gap: 18px; }
 .message { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 9px; align-items: start; }
 .message.user { grid-template-columns: minmax(0, 1fr); justify-items: end; }
@@ -274,6 +282,26 @@ button { color: inherit; }
 .selection-preview small { margin-bottom: 3px; color: var(--muted); font-size: 8px; }
 .selection-preview span { overflow: hidden; color: #666279; font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .selection-preview button { width: 21px; height: 21px; padding: 0; border: 0; border-radius: 7px; background: var(--surface-soft); color: var(--muted); cursor: pointer; }
+.pdf-source-card { display:grid; gap:7px; margin:0 0 6px; padding:9px 10px; border:1px solid #d8cffc; border-radius:13px; background:linear-gradient(135deg,#faf9ff,#f2efff); box-shadow:0 6px 18px rgba(75,54,145,.06); }
+.pdf-source-heading { display:grid; grid-template-columns:31px minmax(0,1fr) 22px; align-items:center; gap:8px; }
+.pdf-source-icon { display:grid; place-items:center; width:31px; height:31px; border-radius:9px; background:#6852df; color:#fff; font-size:8px; font-weight:850; letter-spacing:.04em; }
+.pdf-source-heading div { min-width:0; }
+.pdf-source-heading strong,.pdf-source-heading small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pdf-source-heading strong { color:#403a58; font-size:10px; }
+.pdf-source-heading small,.pdf-source-status,.pdf-source-hint { color:var(--muted); font-size:8.5px; line-height:1.45; }
+.pdf-source-heading small { margin-top:2px; }
+.pdf-source-heading button { width:22px; height:22px; padding:0; border:0; border-radius:7px; background:transparent; color:var(--muted); font-size:16px; cursor:pointer; }
+.pdf-source-heading button:hover { background:#eeeafb; color:#5f4cc4; }
+.pdf-source-status,.pdf-source-hint { margin:0; }
+.pdf-source-status.is-scan { color:#a05a29; }
+.pdf-page-controls { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:5px; }
+.pdf-page-controls label { color:#6a627b; font-size:8.5px; font-weight:750; }
+.pdf-page-controls input { min-width:0; height:28px; padding:0 7px; border:1px solid #d9d3ea; border-radius:8px; background:#fff; color:var(--ink); font-size:8.5px; outline:none; }
+.pdf-page-controls input:focus { border-color:#9d8cf0; box-shadow:0 0 0 2px rgba(111,85,231,.12); }
+.pdf-page-controls button { min-height:28px; padding:0 7px; border:1px solid #ded8ec; border-radius:8px; background:#fff; color:#5e4bc4; font-size:8px; font-weight:720; white-space:nowrap; cursor:pointer; }
+.pdf-page-controls button:hover { border-color:#b6a6f1; background:#eeeaff; }
+.pdf-citation { display:inline-flex; align-items:center; padding:0 4px; border:0; border-bottom:1px dashed #775fe0; background:transparent; color:#644bd2; font:inherit; font-size:.93em; cursor:pointer; }
+.pdf-citation:hover { background:#eeeaff; border-radius:4px; }
 .quick-actions { display: flex; gap: 5px; overflow-x: auto; padding: 4px 0 7px; scrollbar-width: none; }
 .quick-actions button { flex: 0 0 auto; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.9); color: #5f5b69; font-size: 9px; cursor: pointer; }
 .quick-actions button:hover, .quick-actions button.is-active { border-color: #cabff7; background: var(--brand-soft); color: var(--brand); }
@@ -475,6 +503,15 @@ button { color: inherit; }
 .share-platforms small { font-size:8px; }
 .share-note { margin:12px 1px 0; color:var(--muted); font-size:8.5px; line-height:1.55; }
 .share-dialog-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:13px; padding-top:12px; border-top:1px solid var(--line); }
+.pdf-citation-dialog { width:min(430px,calc(100% - 24px)); max-height:calc(100% - 28px); padding:0; overflow:hidden; border:1px solid var(--line); border-radius:19px; background:var(--surface); color:var(--ink); box-shadow:0 24px 70px rgba(27,22,48,.3); }
+.pdf-citation-dialog::backdrop { background:rgba(27,22,41,.38); backdrop-filter:blur(2px); }
+.pdf-citation-dialog-shell { display:grid; max-height:calc(100vh - 32px); padding:17px; overflow:auto; }
+.pdf-citation-dialog-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+.pdf-citation-dialog-heading h2 { margin:1px 0 0; font-size:17px; letter-spacing:-.025em; }
+.pdf-citation-dialog-heading button { width:28px; height:28px; padding:0; border:0; border-radius:8px; background:var(--surface-soft); color:var(--muted); font-size:18px; cursor:pointer; }
+.pdf-citation-source,.pdf-citation-note { margin:10px 0 0; color:var(--muted); font-size:9px; line-height:1.55; }
+.pdf-citation-excerpt { max-height:260px; margin:11px 0 0; padding:11px; overflow:auto; border:1px solid #e0dcec; border-radius:11px; background:#f8f7fb; color:#4a4654; white-space:pre-wrap; overflow-wrap:anywhere; font:9px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.pdf-citation-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
 .toast { position: absolute; z-index: 30; left: 50%; bottom: 108px; max-width: calc(100% - 36px); padding: 9px 13px; transform: translateX(-50%); border-radius: 10px; background: #23202b; box-shadow: 0 8px 25px rgba(0,0,0,.18); color: white; font-size: 10px; line-height: 1.45; text-align: center; animation: toastIn 160ms ease; }
 .control-tooltip { position:fixed; z-index:80; width:max-content; max-width:min(230px, calc(100vw - 20px)); padding:7px 9px; border:1px solid rgba(255,255,255,.12); border-radius:8px; background:#23202b; box-shadow:0 8px 24px rgba(0,0,0,.22); color:#fff; font-size:9px; line-height:1.45; text-align:left; pointer-events:none; animation:tooltipIn 120ms ease; }
 
@@ -491,7 +528,6 @@ button { color: inherit; }
 .space-switch,
 .page-context-label,
 .eyebrow,
-.selection-hint,
 .assistant-meta,
 .assistant-meta strong,
 .code-block-head,
@@ -583,8 +619,8 @@ button { color: inherit; }
   :root { color-scheme: dark; --bg: #15151b; --surface: #1d1d25; --surface-soft: #282731; --ink: #f4f1f8; --muted: #a7a2b2; --line: #32303c; --brand-soft: #30284f; --shadow: 0 12px 32px rgba(0,0,0,.22); }
   .app-header { background: rgba(29,29,37,.82); border-bottom-color: var(--line); }
   .page-context-bar, .action-card, .quick-actions button { background: rgba(29,29,37,.88); }
+  .conversation-rounds-trigger { background:rgba(29,29,37,.94); }
   .action-card-wide { background: linear-gradient(120deg, rgba(32,31,41,.96), rgba(42,35,66,.9)); }
-  .selection-hint { background: #282731; }
   .message.user .message-bubble { background: #30284f; color: #eee9ff; }
   .message-bubble { color: #d8d4df; }
   .message-bubble code { background: #2c2a34; }

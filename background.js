@@ -255,6 +255,20 @@ async function readPageContext(tabId) {
     throw new Error("要读取本地文件，请在 chrome://extensions 的 SideMind 详情中开启“允许访问文件网址”，然后重试");
   }
 
+  // Chrome 的内置 PDF 查看器没有普通网页 DOM；交给侧边栏使用本地打包的 PDF.js
+  // 直接下载并解析公共链接。这里不发起下载，也不携带站点 Cookie。
+  if (/\.pdf(?:$|[?#])/i.test(pageUrl)) {
+    return {
+      title: tab.title || decodeURIComponent(new URL(pageUrl).pathname.split("/").pop() || "PDF 文档"),
+      url: pageUrl,
+      description: "可直接读取的 PDF 文档",
+      headings: [],
+      text: "",
+      selection: "",
+      isPdf: true
+    };
+  }
+
   try {
     const response = await chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_CONTEXT" });
     if (response?.context) return response.context;

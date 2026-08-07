@@ -5,11 +5,11 @@ const DEFAULTS = {
   fontSizeScale: "comfortable", activeProfileId: "default", modelProfiles: [], modelProfileLibraryVersion: 0, tokenBudget: 0
 };
 
-const MODEL_PROFILE_LIBRARY_VERSION = 3;
+const MODEL_PROFILE_LIBRARY_VERSION = 5;
 const BUILT_IN_MODEL_PROFILES = [
-  { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000 },
-  { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000 },
-  { id: "builtin-deepseek-pro", name: "DeepSeek · V4 Pro", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-pro", maxOutputTokens: 16000 }
+  { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000, supportsVision: true },
+  { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000, supportsVision: false },
+  { id: "builtin-deepseek-pro", name: "DeepSeek · V4 Pro", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-pro", maxOutputTokens: 16000, supportsVision: false }
 ];
 
 const PROVIDER_MODELS = {
@@ -33,7 +33,7 @@ const form = document.getElementById("settingsForm");
 const fields = {
   connectionMode: document.getElementById("connectionMode"), responseLanguage: document.getElementById("responseLanguage"), startupBehavior: document.getElementById("startupBehavior"), fontSizeScale: document.getElementById("fontSizeScale"), profileSelect: document.getElementById("profileSelect"), profileName: document.getElementById("profileName"),
   provider: document.getElementById("provider"), apiMode: document.getElementById("apiMode"), baseUrl: document.getElementById("baseUrl"),
-  apiKey: document.getElementById("apiKey"), tokenBudget: document.getElementById("tokenBudget"), modelPreset: document.getElementById("modelPreset"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens")
+  apiKey: document.getElementById("apiKey"), tokenBudget: document.getElementById("tokenBudget"), modelPreset: document.getElementById("modelPreset"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens"), supportsVision: document.getElementById("supportsVision")
 };
 const statusText = document.getElementById("statusText");
 const testButton = document.getElementById("testButton");
@@ -42,6 +42,7 @@ const newProfileButton = document.getElementById("newProfileButton");
 const deleteProfileButton = document.getElementById("deleteProfileButton");
 const connectionModeHint = document.getElementById("connectionModeHint");
 const tokenHint = document.getElementById("tokenHint");
+const supportsVisionHint = document.getElementById("supportsVisionHint");
 const apiKeyHint = document.getElementById("apiKeyHint");
 const resetTokenUsageButton = document.getElementById("resetTokenUsageButton");
 const securityTitle = document.getElementById("securityTitle");
@@ -106,9 +107,12 @@ function mergeBuiltInProfiles(profiles, libraryVersion) {
 
 function normalizeProfileProvider(profile) {
   const baseUrl = String(profile?.baseUrl || "").toLowerCase();
-  return profile?.provider === "compatible" && /:11434(?:\/|$)/.test(baseUrl)
+  const normalized = profile?.provider === "compatible" && /:11434(?:\/|$)/.test(baseUrl)
     ? { ...profile, provider: "ollama", apiMode: "chat" }
     : { ...profile };
+  if (normalized.id === "builtin-openai" && normalized.supportsVision === undefined) return { ...normalized, supportsVision: true };
+  if (normalized.provider === "deepseek") return { ...normalized, supportsVision: false };
+  return normalized;
 }
 
 function inheritProviderApiKeys(profiles) {
@@ -125,8 +129,15 @@ function providerCredentialKey(profile) {
   return `${profile.provider || "compatible"}|${String(profile.baseUrl || "").replace(/\/+$/, "").toLowerCase()}`;
 }
 
+function isKnownTextOnlyProfile(profile) {
+  const provider = String(profile?.provider || "").toLowerCase();
+  const baseUrl = String(profile?.baseUrl || "").toLowerCase();
+  return provider === "deepseek" || /(^|\.)api\.deepseek\.com(?:\/|$)/.test(baseUrl.replace(/^https?:\/\//, ""));
+}
+
 function profileFromValues(id, name, values) {
-  return { id, name, provider: values.provider, apiMode: values.apiMode, baseUrl: values.baseUrl, apiKey: values.apiKey, tokenBudget: Math.max(0, Number(values.tokenBudget) || 0), model: values.model, maxOutputTokens: Number(values.maxOutputTokens) || DEFAULTS.maxOutputTokens };
+  const profile = { id, name, provider: values.provider, apiMode: values.apiMode, baseUrl: values.baseUrl, apiKey: values.apiKey, tokenBudget: Math.max(0, Number(values.tokenBudget) || 0), model: values.model, maxOutputTokens: Number(values.maxOutputTokens) || DEFAULTS.maxOutputTokens, supportsVision: Boolean(values.supportsVision) };
+  return normalizeProfileProvider(profile);
 }
 
 function renderProfileSelect() {
@@ -151,6 +162,7 @@ function loadProfile(profileId) {
   for (const key of ["profileName","provider","apiMode","baseUrl","apiKey","tokenBudget","maxOutputTokens"]) {
     fields[key].value = key === "profileName" ? profile.name : profile[key];
   }
+  fields.supportsVision.checked = Boolean(profile.supportsVision);
   fields.model.value = profile.model || "";
   renderModelChoices(profile.model);
   updateProviderHint();
@@ -257,9 +269,20 @@ function applyModelChoice() {
   }
   fields.model.value = fields.modelPreset.value;
   if (/^新模型/.test(fields.profileName.value)) fields.profileName.value = `${providerLabel(fields.provider.value)} · ${fields.model.value}`;
+  syncVisionCapabilityControl();
 }
 
-function updateProviderHint() { const preset = PROVIDER_PRESETS[fields.provider.value] || PROVIDER_PRESETS.compatible; tokenHint.textContent = preset.tokenHint; if (preset.maxLimit) fields.maxOutputTokens.max = String(preset.maxLimit); else fields.maxOutputTokens.removeAttribute("max"); updateApiKeyRequirement(); }
+function syncVisionCapabilityControl() {
+  const lockedTextOnly = isKnownTextOnlyProfile({ provider: fields.provider.value, baseUrl: fields.baseUrl.value });
+  if (lockedTextOnly) fields.supportsVision.checked = false;
+  fields.supportsVision.disabled = lockedTextOnly;
+  fields.supportsVision.closest(".model-vision-option")?.classList.toggle("is-locked", lockedTextOnly);
+  supportsVisionHint.textContent = lockedTextOnly
+    ? "DeepSeek V4 官方 API 仅支持文本输入，此项已锁定关闭。请切换到实际支持视觉的模型后再开启。"
+    : "用于截图、粘贴图片和扫描 PDF 页面。仅在服务商与模型实际支持视觉输入时开启。";
+}
+
+function updateProviderHint() { const preset = PROVIDER_PRESETS[fields.provider.value] || PROVIDER_PRESETS.compatible; tokenHint.textContent = preset.tokenHint; if (preset.maxLimit) fields.maxOutputTokens.max = String(preset.maxLimit); else fields.maxOutputTokens.removeAttribute("max"); updateApiKeyRequirement(); syncVisionCapabilityControl(); }
 
 function updateApiKeyRequirement() {
   const webMode = fields.connectionMode.value === "chatgpt_web";
@@ -285,7 +308,7 @@ async function saveSettings() {
 function snapshotCurrentProfile({ provider = state.currentProvider } = {}) {
   if (!state.activeProfileId || !fields.profileName.value) return;
   const sharedConnection = { provider, apiMode:fields.apiMode.value, baseUrl:fields.baseUrl.value.trim().replace(/\/+$/, ""), apiKey:fields.apiKey.value.trim(), tokenBudget:Math.max(0, Number(fields.tokenBudget.value) || 0) };
-  const nextProfile = profileFromValues(state.activeProfileId, fields.profileName.value.trim(), { ...sharedConnection, model:fields.model.value.trim(), maxOutputTokens:Number(fields.maxOutputTokens.value) || DEFAULTS.maxOutputTokens });
+  const nextProfile = profileFromValues(state.activeProfileId, fields.profileName.value.trim(), { ...sharedConnection, model:fields.model.value.trim(), maxOutputTokens:Number(fields.maxOutputTokens.value) || DEFAULTS.maxOutputTokens, supportsVision:fields.supportsVision.checked });
   state.profiles = state.profiles.map((profile) => profile.provider === provider ? { ...profile, ...sharedConnection } : profile);
   const index = state.profiles.findIndex((item) => item.id === state.activeProfileId);
   if (index >= 0) state.profiles[index] = nextProfile; else state.profiles.push(nextProfile);

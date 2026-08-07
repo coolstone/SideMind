@@ -2,33 +2,19 @@
   if (window.__SIDEMIND_LOADED__) return;
   window.__SIDEMIND_LOADED__ = true;
 
-  let selectionText = "";
   let lastReportedSelection = "";
   let selectionNotifyTimer = null;
   let lastEditable = null;
-  const toolbar = createToolbar();
   const onChatGPT = location.protocol === "https:" && location.hostname === "chatgpt.com";
 
   document.addEventListener("focusin", (event) => {
     if (isEditable(event.target)) lastEditable = event.target;
   }, true);
 
-  document.addEventListener("mouseup", (event) => {
-    if (toolbar.contains(event.target)) return;
-    window.setTimeout(() => showToolbarForSelection(), 10);
-  }, true);
-
   document.addEventListener("selectionchange", () => {
     clearTimeout(selectionNotifyTimer);
     selectionNotifyTimer = window.setTimeout(reportSelectionChange, 180);
   }, true);
-
-  document.addEventListener("mousedown", (event) => {
-    if (!toolbar.contains(event.target)) hideToolbar();
-  }, true);
-
-  document.addEventListener("scroll", hideToolbar, true);
-  window.addEventListener("resize", hideToolbar);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "GET_PAGE_CONTEXT") {
@@ -58,73 +44,11 @@
 
   if (onChatGPT) setupChatGPTBridge();
 
-  function createToolbar() {
-    const node = document.createElement("div");
-    node.id = "sidemind-selection-toolbar";
-    node.setAttribute("data-visible", "false");
-    node.setAttribute("role", "toolbar");
-    node.setAttribute("aria-label", "SideMind 划词工具");
-    const actions = [
-      ["ask", "✦ 提问"],
-      ["explain", "解释"],
-      ["translate", "翻译"],
-      ["rewrite", "改写"]
-    ];
-    for (const [action, label] of actions) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.action = action;
-      button.textContent = label;
-      button.addEventListener("mousedown", (event) => event.preventDefault());
-      button.addEventListener("click", () => openTask(action));
-      node.appendChild(button);
-    }
-    (document.body || document.documentElement).appendChild(node);
-    return node;
-  }
-
-  function showToolbarForSelection() {
-    const selection = window.getSelection();
-    const text = selection?.toString().trim() || "";
-    if (text.length < 2 || text.length > 6000 || !selection.rangeCount) {
-      hideToolbar();
-      return;
-    }
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
-    if (!rect.width && !rect.height) return;
-    selectionText = text;
-    toolbar.style.left = "0px";
-    toolbar.style.top = "0px";
-    toolbar.setAttribute("data-visible", "true");
-    const toolbarRect = toolbar.getBoundingClientRect();
-    const left = Math.min(
-      window.innerWidth - toolbarRect.width - 10,
-      Math.max(10, rect.left + rect.width / 2 - toolbarRect.width / 2)
-    );
-    const top = rect.top > toolbarRect.height + 14
-      ? rect.top - toolbarRect.height - 8
-      : Math.min(window.innerHeight - toolbarRect.height - 10, rect.bottom + 8);
-    toolbar.style.left = `${left}px`;
-    toolbar.style.top = `${top}px`;
-  }
-
-  function hideToolbar() {
-    toolbar.setAttribute("data-visible", "false");
-  }
-
   function reportSelectionChange() {
     const text = window.getSelection()?.toString().trim().slice(0, 6000) || "";
     if (text === lastReportedSelection) return;
     lastReportedSelection = text;
     chrome.runtime.sendMessage({ type: "PAGE_SELECTION_CHANGED", selection: text }).catch(() => {});
-  }
-
-  async function openTask(action) {
-    hideToolbar();
-    await chrome.runtime.sendMessage({
-      type: "OPEN_SIDEPANEL",
-      payload: { action, selection: selectionText }
-    });
   }
 
   function extractPageContext() {
@@ -147,7 +71,7 @@
     clone.querySelectorAll([
       "script", "style", "noscript", "svg", "canvas", "iframe", "form",
       "nav", "footer", "aside", "dialog", "[aria-hidden='true']",
-      "#sidemind-selection-toolbar", "#sidemind-chatgpt-sync", "#sidemind-chatgpt-notice"
+      "#sidemind-chatgpt-sync", "#sidemind-chatgpt-notice"
     ].join(",")).forEach((node) => node.remove());
     const domText = (clone.innerText || clone.textContent || "")
       .replace(/\u00a0/g, " ")

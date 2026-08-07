@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8");
+const pdfContextSource = fs.readFileSync(path.join(root, "pdf-context.js"), "utf8");
 
 const noopEvent = { addListener() {} };
 let bridgeSendCount = 0;
@@ -158,7 +159,7 @@ assert.equal(bridgeSendCount, 2, "a missing old content script should be retried
 assert.equal(bridgeInjectionCount, 1, "the current content script should be injected before retrying");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert.equal(manifest.version, "0.5.29");
+assert.equal(manifest.version, "0.5.30");
 assert.ok(manifest.permissions.includes("scripting"));
 assert.ok(manifest.permissions.includes("clipboardWrite"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
@@ -173,6 +174,10 @@ assert.ok(fs.existsSync(path.join(root, "assets/logo-wordmark.svg")));
 assert.ok(fs.existsSync(path.join(root, "assets/logo-wordmark.png")));
 assert.ok(fs.existsSync(path.join(root, "assets/donate-wechat.jpg")));
 assert.ok(fs.existsSync(path.join(root, "assets/donate-alipay.jpg")));
+assert.ok(fs.existsSync(path.join(root, "vendor/pdfjs/pdf.mjs")), "PDF.js main module should be bundled locally");
+assert.ok(fs.existsSync(path.join(root, "vendor/pdfjs/pdf.worker.mjs")), "PDF.js worker should be bundled locally");
+assert.ok(fs.existsSync(path.join(root, "vendor/pdfjs/LICENSE")), "PDF.js license should be retained");
+assert.ok(fs.existsSync(path.join(root, "vendor/pdfjs/NOTICE")), "PDF.js notice should be retained");
 const usageGuide = fs.readFileSync(path.join(root, "SideMind-使用与扩展指南.md"), "utf8");
 assert.match(usageGuide, /使用压缩包安装到 Chrome/);
 assert.match(usageGuide, /为什么做 SideMind/);
@@ -198,8 +203,6 @@ assert.match(backgroundSource, /provider === "ollama"/);
 assert.match(backgroundSource, /\/v1\/chat\/completions/);
 assert.doesNotMatch(backgroundSource, /await chrome\.storage\.session\.set\([\s\S]{0,220}await openPanel\(tab\)/);
 
-const contentStyleSource = fs.readFileSync(path.join(root, "content.css"), "utf8");
-
 for (const filename of fs.readdirSync(root).filter((name) => name.endsWith(".html"))) {
   const html = fs.readFileSync(path.join(root, filename), "utf8");
   const ids = [...html.matchAll(/\sid=["']([^"']+)["']/g)].map((match) => match[1]);
@@ -207,6 +210,8 @@ for (const filename of fs.readdirSync(root).filter((name) => name.endsWith(".htm
 }
 
 const sidepanelSource = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
+const pdfSidepanelHtml = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8");
+const optionsSourceForPdf = fs.readFileSync(path.join(root, "options.js"), "utf8");
 assert.match(sidepanelSource, /MAX_ATTACHMENT_TOTAL_BYTES = 5 \* 1024 \* 1024/);
 assert.match(sidepanelSource, /!ui\.promptInput\.value\.trim\(\) && !state\.attachments\.length/);
 assert.match(sidepanelSource, /addEventListener\("paste"/);
@@ -230,6 +235,49 @@ assert.match(sidepanelSource, /async function createStoredMessageAttachments/);
 assert.match(sidepanelSource, /async function compressImageForHistory/);
 assert.match(sidepanelSource, /function createMessageAttachmentGallery/);
 assert.match(sidepanelSource, /function prepareMessagesForStorage/);
+assert.match(sidepanelSource, /function buildPdfRequestContext/);
+assert.match(sidepanelSource, /function loadPdfFromFile/);
+assert.match(sidepanelSource, /function loadPdfFromUrl/);
+assert.match(sidepanelSource, /function usePdfPageRange/);
+assert.match(sidepanelSource, /function openPdfCitation/);
+assert.match(pdfContextSource, /所选.*超过当前上下文预算/);
+assert.match(sidepanelSource, /\[p\. N\]/);
+assert.match(sidepanelSource, /pdfContext: sanitizePdfContext/);
+assert.match(sidepanelSource, /PDF 原文件已不在内存中/);
+assert.match(sidepanelSource, /扫描件\/图文 PDF/);
+assert.match(pdfSidepanelHtml, /application\/pdf/);
+assert.match(pdfSidepanelHtml, /pdf-context\.js/);
+assert.match(pdfSidepanelHtml, /pdfCitationDialog/);
+assert.match(fs.readFileSync(path.join(root, "options.html"), "utf8"), /supportsVision/);
+assert.match(optionsSourceForPdf, /MODEL_PROFILE_LIBRARY_VERSION = 5/);
+assert.match(optionsSourceForPdf, /DeepSeek V4 官方 API 仅支持文本输入，此项已锁定关闭/);
+assert.match(optionsSourceForPdf, /if \(normalized\.provider === "deepseek"\) return \{ \.\.\.normalized, supportsVision: false \}/);
+
+const pdfContext = vm.createContext({
+  chrome: { runtime: { getURL: (value) => `chrome-extension://test-extension/${value}` } },
+  URL,
+  crypto: { randomUUID: () => "pdf-context-id" },
+  console
+});
+new vm.Script(pdfContextSource, { filename: "pdf-context.js" }).runInContext(pdfContext);
+const pdfApi = pdfContext.SideMindPdf;
+assert.deepEqual([...pdfApi.parsePageRange("1, 3-5,5", 8)], [1, 3, 4, 5], "page ranges should normalize and deduplicate");
+assert.throws(() => pdfApi.parsePageRange("5-3", 8), /起点不能大于终点/);
+assert.throws(() => pdfApi.parsePageRange("9", 8), /1 到 8/);
+const documentMap = pdfApi.buildDocumentMap([
+  { pageNumber: 1, text: "第一页标题\n" + "A".repeat(500) },
+  { pageNumber: 2, text: "第二页标题\n" + "B".repeat(500) }
+], 600);
+assert.ok(documentMap.text.length <= pdfApi.MAX_DOCUMENT_MAP_CHARS, "document map should keep a bounded character budget");
+assert.match(documentMap.text, /\[p\. 1\]/);
+assert.equal(pdfApi.detectTextStatus([{ text: "" }, { text: "短" }]), "scanned", "near-empty text layers should be marked as scanned");
+const storedPdf = pdfApi.storedPdfContext({
+  id: "runtime-pdf", sourceType: "local", name: "example.pdf", pageCount: 2, textStatus: "text",
+  pages: [{ pageNumber: 1, titleHint: "标题", text: "第一页正文" }, { pageNumber: 2, titleHint: "第二页", text: "第二页正文" }],
+  sourceBytes: new Uint8Array([1, 2, 3])
+}, [1]);
+assert.equal("sourceBytes" in storedPdf, false, "persisted PDF context must never include original PDF bytes");
+assert.equal(storedPdf.referencedPages[0].pageNumber, 1);
 assert.match(sidepanelSource, /data-message-image/);
 assert.match(sidepanelSource, /attachments: messageAttachments/);
 assert.match(sidepanelSource, /const replayImages = getImageDataUrls/);
@@ -335,7 +383,7 @@ assert.match(sidepanelSource, /localArtifacts/);
 const contentSource = fs.readFileSync(path.join(root, "content.js"), "utf8");
 assert.doesNotMatch(sidepanelSource, /focusModeButton|toggleFocusMode/);
 assert.doesNotMatch(contentSource, /TOGGLE_FOCUS_MODE|sidemind-focus-mode/);
-assert.doesNotMatch(contentStyleSource, /sidemind-focus-mode/);
+assert.doesNotMatch(contentSource, /sidemind-selection-toolbar|createToolbar|showToolbarForSelection|✦ 提问/);
 assert.match(contentSource, /location\.protocol === "file:"/);
 assert.match(contentSource, /decodeURIComponent\(location\.pathname/);
 assert.match(contentSource, /if \(!onChatGPT\) return;\s+if \(document\.getElementById\("sidemind-chatgpt-sync"\)\) return;/);
@@ -580,5 +628,12 @@ assert.match(compareStyle, /grid-auto-flow:column/);
 assert.match(compareStyle, /\.answer-card\.is-primary/);
 assert.match(usageGuide, /从其他模型获取答案并比较/);
 assert.match(usageGuide, /每个替代答案都是一次单独的模型请求/);
+assert.match(sidepanelHtml, /id="conversationRoundsButton"/);
+assert.match(sidepanelHtml, /id="conversationRoundsMenu"/);
+assert.match(sidepanelSource, /function renderConversationRoundNavigator/);
+assert.match(sidepanelSource, /dataset\.tooltip = round\.question/);
+assert.match(sidepanelSource, /dataset\.roundMessageId = round\.id/);
+assert.match(sidepanelSource, /target\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
+assert.match(sidepanelSource, /conversationRounds\(\)\.length < 2/);
 
 console.log("SideMind regression checks: OK");

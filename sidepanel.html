@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SideMind AI</title>
-    <link rel="stylesheet" href="sidepanel.css?v=13" />
+    <link rel="stylesheet" href="sidepanel.css?v=14" />
   </head>
   <body>
     <div class="app-shell">
@@ -73,13 +73,15 @@
             </button>
           </div>
 
-          <div class="selection-hint">
-            <span class="mouse-icon">⌁</span>
-            <span>在网页中选中文字，可直接解释、翻译或改写</span>
-          </div>
         </section>
 
         <section class="chat-state" id="chatState" hidden>
+          <div class="conversation-rounds" id="conversationRounds">
+            <button class="conversation-rounds-trigger" id="conversationRoundsButton" type="button" aria-label="本次会话目录" aria-expanded="false" data-tooltip="本次会话目录：按问题定位对话轮次" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6h11M7 12h11M7 18h11"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+            </button>
+            <nav class="conversation-rounds-menu" id="conversationRoundsMenu" aria-label="本次会话问题目录" hidden></nav>
+          </div>
           <div class="message-list" id="messageList" aria-live="polite"></div>
           <div class="thinking-row" id="thinkingRow" hidden>
             <span class="assistant-avatar">S</span>
@@ -93,11 +95,26 @@
           <div><small>来自您选择的文本</small><span id="selectionPreviewText"></span></div>
           <button id="clearSelectionButton" type="button" aria-label="移除选中文本">×</button>
         </div>
+        <section class="pdf-source-card" id="pdfSourceCard" hidden aria-live="polite">
+          <div class="pdf-source-heading">
+            <span class="pdf-source-icon" aria-hidden="true">PDF</span>
+            <div><strong id="pdfSourceName">PDF 文档</strong><small id="pdfSourceMeta"></small></div>
+            <button id="clearPdfButton" type="button" aria-label="移除 PDF 文档" title="移除 PDF 文档">×</button>
+          </div>
+          <p class="pdf-source-status" id="pdfSourceStatus"></p>
+          <div class="pdf-page-controls">
+            <label for="pdfPageRangeInput">页码</label>
+            <input id="pdfPageRangeInput" type="text" inputmode="text" placeholder="留空：全文概览；如 3、5-8" />
+            <button id="pdfUseRangeButton" type="button">指定页提问</button>
+            <button id="pdfOverviewButton" type="button">全文概览</button>
+          </div>
+          <p class="pdf-source-hint" id="pdfSourceHint"></p>
+        </section>
         <div class="quick-actions" id="quickActions">
           <button class="prompt-overflow-button" type="button" id="promptOverflowButton" title="更多提示词" aria-label="更多提示词">•••</button>
         </div>
         <div class="attachment-list" id="attachmentList" hidden></div>
-        <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,text/plain,text/markdown,text/csv,application/json,text/html" multiple hidden />
+        <input id="fileInput" type="file" accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,text/plain,text/markdown,text/csv,application/json,text/html" multiple hidden />
         <form class="composer" id="composerForm">
           <textarea id="promptInput" rows="1" maxlength="12000" placeholder="问任何问题，可粘贴图片，@ 模型，/ 提示…"></textarea>
           <p class="prompt-limit-hint" id="promptLimitHint" aria-live="polite" hidden></p>
@@ -116,7 +133,7 @@
               <button class="model-switch" id="modelButton" type="button" data-tooltip="切换模型：选择已保存的 API 配置">
                 <i></i><span id="modelName">未配置模型</span><b>⌄</b>
               </button>
-              <button class="composer-icon-button" id="fileUploadButton" type="button" data-tooltip="上传附件：添加图片或文本文件" aria-label="上传附件">
+              <button class="composer-icon-button" id="fileUploadButton" type="button" data-tooltip="上传附件：添加 PDF、图片或文本文件" aria-label="上传附件">
                 <svg viewBox="0 0 24 24"><path d="m8 12 5-5a4 4 0 0 1 6 6l-7 7a6 6 0 0 1-8-8l7-7"/></svg>
               </button>
               <button class="composer-icon-button" id="captureButton" type="button" data-tooltip="页面截图：截取当前可见区域并交给视觉模型" aria-label="截取当前页面">
@@ -259,12 +276,29 @@
         </div>
       </dialog>
 
+      <dialog class="pdf-citation-dialog" id="pdfCitationDialog" aria-labelledby="pdfCitationTitle">
+        <div class="pdf-citation-dialog-shell">
+          <div class="pdf-citation-dialog-heading">
+            <div><p class="eyebrow">PDF EVIDENCE</p><h2 id="pdfCitationTitle">页码依据</h2></div>
+            <button id="closePdfCitationButton" type="button" aria-label="关闭页码依据">×</button>
+          </div>
+          <p class="pdf-citation-source" id="pdfCitationSource"></p>
+          <pre class="pdf-citation-excerpt" id="pdfCitationExcerpt"></pre>
+          <p class="pdf-citation-note" id="pdfCitationNote"></p>
+          <div class="pdf-citation-actions">
+            <button class="secondary-dialog-button" id="closePdfCitationSecondaryButton" type="button">关闭</button>
+            <button class="primary-dialog-button" id="openPdfSourceButton" type="button">打开原 PDF 第 <span id="pdfCitationPage">1</span> 页</button>
+          </div>
+        </div>
+      </dialog>
+
       <div class="control-tooltip" id="controlTooltip" role="tooltip" hidden></div>
       <div class="toast" id="toast" role="status" hidden></div>
     </div>
     <script src="template-variables.js"></script>
     <script src="prompt-library.js"></script>
     <script src="history-transfer.js"></script>
+    <script src="pdf-context.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

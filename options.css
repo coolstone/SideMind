@@ -55,6 +55,8 @@ code { padding: 1px 4px; border-radius: 4px; background: #efedf3; font: 10px ui-
 .backup-secret-option input { width:16px; height:16px; margin:1px 0 0; padding:0; }
 .backup-secret-option span,.backup-secret-option small { display:block; }
 .backup-secret-option small { margin-top:4px; line-height:1.5; }
+.model-vision-option.is-locked { cursor:not-allowed; opacity:.68; border-style:dashed; }
+.model-vision-option.is-locked strong { color:#746f80; }
 .backup-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:15px; }
 .backup-actions button { height:38px; padding:0 14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:#5e5868; font-size:10px; font-weight:700; cursor:pointer; }
 .backup-actions button:last-child { border-color:#cfc4f5; background:var(--brand); color:#fff; }

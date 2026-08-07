@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# 用法：./scripts/release-sidemind.sh "提交说明" v0.5.29 "Tag 说明"
+# 用法：./scripts/release-sidemind.sh "提交说明" v0.5.30 "Tag 说明"
 # 只提交已跟踪文件，避免把本地 ZIP、临时目录或个人草稿带入 GitHub。
 set -euo pipefail
 
