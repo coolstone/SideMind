@@ -49,8 +49,9 @@ const DEFAULT_UI_SETTINGS = {
   modelProfileLibraryVersion: 0
 };
 
-const MODEL_PROFILE_LIBRARY_VERSION = 5;
+const MODEL_PROFILE_LIBRARY_VERSION = 6;
 const BUILT_IN_MODEL_PROFILES = [
+  ...SideMindWorkflow.openAIProfiles,
   { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000, supportsVision: true },
   { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000, supportsVision: false },
   { id: "builtin-deepseek-pro", name: "DeepSeek · V4 Pro", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-pro", maxOutputTokens: 16000, supportsVision: false }
@@ -84,6 +85,7 @@ const state = {
   conversationTitle: "",
   conversationTitleCustomized: false,
   busy: false,
+  dataRestoring: false,
   settings: null,
   activeRequestId: null,
   stopRequested: false,
@@ -112,7 +114,8 @@ const state = {
   sharePreviewAsset: null,
   sharePreviewObjectUrl: "",
   balanceRefreshPromise: null,
-  balanceRefreshKey: ""
+  balanceRefreshKey: "",
+  deepSeekBalance: null
 };
 
 const ui = Object.fromEntries([
@@ -136,6 +139,8 @@ init();
 
 async function init() {
   bindEvents();
+  try { await SideMindWorkflow.migrate(chrome.storage.local); }
+  catch (error) { showToast(`历史迁移未完成，原数据保留：${error.message}`); }
   await Promise.all([loadSettings(), loadActiveTabContext(), loadLibraryData()]);
   await applyStartupBehavior();
   await consumePendingTask();
@@ -174,7 +179,14 @@ function bindEvents() {
   ui.drawerBackdrop.addEventListener("click", closeHistory);
   ui.importHistoryButton.addEventListener("click", () => ui.importHistoryInput.click());
   ui.importHistoryInput.addEventListener("change", importHistoryFile);
-  ui.exportHistoryButton.addEventListener("click", exportCurrentSpaceHistory);
+  ui.exportHistoryButton.addEventListener("click", () => exportCurrentSpaceHistory());
+  document.getElementById("exportHistoryZip").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try { await exportCurrentSpaceHistory(true); }
+    catch (error) { showToast("导出失败：" + error.message); }
+    finally { button.disabled = false; }
+  });
   ui.clearHistoryButton.addEventListener("click", clearHistory);
   ui.historySearchInput.addEventListener("input", () => {
     clearTimeout(state.historySearchTimer);
@@ -197,6 +209,10 @@ function bindEvents() {
   ui.readPageButton.addEventListener("click", attachCurrentPage);
   ui.modelButton.addEventListener("click", () => togglePopover("model"));
   ui.reasoningButton.addEventListener("click", cycleReasoningMode);
+  for (const id of ["openAIEffort", "imageQuality", "imageComplexity"]) {
+    const select = document.getElementById(id);
+    select.addEventListener("change", () => updateUiPreferences({ [id]: select.value }));
+  }
   ui.importChatGPTButton.addEventListener("click", syncLatestChatGPTResponse);
   ui.connectionModeSelect.addEventListener("change", changeConnectionMode);
   ui.manageModelsButton.addEventListener("click", () => chrome.runtime.openOptionsPage());
@@ -255,9 +271,44 @@ function bindEvents() {
   });
 
   ui.messageList.addEventListener("click", handleMessageTool);
+  ui.messageList.addEventListener("pointerdown", (event) => {
+    if (event.target.closest('[data-tool="favorite-snippet"]')) event.preventDefault();
+  });
+  const snippetsButton = document.createElement("button");
+  snippetsButton.type = "button";
+  snippetsButton.textContent = "收藏片段";
+  snippetsButton.onclick = () => SideMindSnippets.open({
+    spaceId: state.currentSpaceId,
+    onNavigate: async (snippet) => {
+      if (state.busy) { showToast("请先停止当前请求"); return false; }
+      const { conversations = [] } = await chrome.storage.local.get("conversations");
+      const conversation = conversations.find((item) => item.id === snippet.conversationId);
+      if (!conversation) { showToast("原会话已删除，收藏内容仍然保留。"); return false; }
+      const originalMessage = conversation.messages.find((item) => item.id === snippet.messageId);
+      if (!originalMessage) { showToast("原消息已删除，收藏内容仍然保留。"); return false; }
+      if (snippet.answerVariantId && snippet.answerVariantId !== "primary") {
+        const index = originalMessage.comparisons?.findIndex((item) => item.id === snippet.answerVariantId) ?? -1;
+        if (index >= 0) originalMessage.comparisonActiveIndex = index + 1;
+      } else originalMessage.comparisonActiveIndex = 0;
+      if (!(await restoreConversation(conversation))) return false;
+      requestAnimationFrame(() => {
+        ui.messageList.querySelector(`[data-message-id="${CSS.escape(snippet.messageId)}"]`)?.scrollIntoView({ block: "start" });
+      });
+      return true;
+    }
+  }).catch((error) => showToast(error.message));
+  ui.historyFavoritesButton.parentElement.appendChild(snippetsButton);
   ui.conversationRoundsButton.addEventListener("click", toggleConversationRoundNav);
   ui.conversationRoundsMenu.addEventListener("click", handleConversationRoundNav);
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.historyRestoredAt) {
+      state.dataRestoring = true;
+      const cancel = state.activeRequestId
+        ? chrome.runtime.sendMessage({ type: "CANCEL_AI_REQUEST", requestId: state.activeRequestId }).catch(() => {})
+        : Promise.resolve();
+      cancel.finally(() => location.reload());
+      return;
+    }
     if (area === "local" && changes.settings) loadSettings();
     if (area === "local" && (changes.prompts || changes.spaces || changes.uiPreferences)) loadLibraryData();
   });
@@ -305,6 +356,11 @@ async function loadLibraryData() {
   state.reasoningEffort = ["none", "high", "max"].includes(data.uiPreferences?.reasoningEffort)
     ? data.uiPreferences.reasoningEffort : "none";
   state.lastConversationId = data.uiPreferences?.lastConversationId || null;
+  for (const id of ["openAIEffort", "imageQuality", "imageComplexity"]) {
+    const select = document.getElementById(id);
+    const saved = data.uiPreferences?.[id];
+    if ([...select.options].some(option => option.value === saved)) select.value = saved;
+  }
   if (!Array.isArray(data.prompts) || data.promptLibraryVersion !== PROMPT_LIBRARY_VERSION || !data.spaces) {
     await chrome.storage.local.set({ prompts: state.prompts, promptLibraryVersion: PROMPT_LIBRARY_VERSION, spaces: state.spaces });
   }
@@ -433,6 +489,11 @@ function renderTokenBalance(text, { low = false, title = "" } = {}) {
   if (!ui.modelPopover.hidden) renderModelProfiles();
 }
 
+function renderDeepSeekBalance(text, { low = false, title = "" } = {}) {
+  state.deepSeekBalance = { text, low, title };
+  if (!ui.modelPopover.hidden) renderModelProfiles();
+}
+
 function formatCurrencyBalance(value, currency) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return `${currency || ""} ${value}`.trim();
@@ -449,25 +510,7 @@ async function updateTokenBalance({ refresh = true } = {}) {
     return;
   }
   if (String(profile.provider || "").toLowerCase() === "deepseek") {
-    const key = providerCredentialKey(profile);
-    const { providerBalances = {} } = await chrome.storage.local.get("providerBalances");
-    const balance = providerBalances[key];
-    if (balance?.provider === "deepseek" && Array.isArray(balance.balances)) {
-      const amount = balance.balances.map((item) => formatCurrencyBalance(item.total, item.currency)).join(" · ");
-      const granted = balance.balances
-        .filter((item) => Number(item.granted) > 0)
-        .map((item) => `赠金 ${formatCurrencyBalance(item.granted, item.currency)}`)
-        .join(" · ");
-      renderTokenBalance(`DeepSeek 余额：${amount}${granted ? `（${granted}）` : ""}`, {
-        low: !balance.isAvailable || balance.balances.every((item) => Number(item.total) <= 0),
-        title: `官方实时余额，最近查询：${new Date(balance.checkedAt).toLocaleTimeString()}；点击刷新`
-      });
-    } else {
-      renderTokenBalance("DeepSeek 余额：正在读取官方余额…", { title: "点击重新查询" });
-    }
-    if (refresh) refreshDeepSeekBalance(profile).catch((error) => {
-      renderTokenBalance(`DeepSeek 余额：查询失败（${error.message}）`, { low: true, title: "点击重试" });
-    });
+    await updateDeepSeekBalance(profile, { refresh });
     return;
   }
   if (!budget) {
@@ -485,6 +528,28 @@ async function updateTokenBalance({ refresh = true } = {}) {
   });
 }
 
+async function updateDeepSeekBalance(profile, { refresh = true } = {}) {
+  const key = providerCredentialKey(profile);
+  const { providerBalances = {} } = await chrome.storage.local.get("providerBalances");
+  const balance = providerBalances[key];
+  if (balance?.provider === "deepseek" && Array.isArray(balance.balances)) {
+    const amount = balance.balances.map((item) => formatCurrencyBalance(item.total, item.currency)).join(" · ");
+    const granted = balance.balances
+      .filter((item) => Number(item.granted) > 0)
+      .map((item) => `赠金 ${formatCurrencyBalance(item.granted, item.currency)}`)
+      .join(" · ");
+    renderDeepSeekBalance(`${amount}${granted ? `（${granted}）` : ""}`, {
+      low: !balance.isAvailable || balance.balances.every((item) => Number(item.total) <= 0),
+      title: `官方实时余额，最近查询：${new Date(balance.checkedAt).toLocaleTimeString()}；点击刷新`
+    });
+  } else {
+    renderDeepSeekBalance("读取余额…", { title: "正在读取 DeepSeek 官方余额；点击重新查询" });
+  }
+  if (refresh) refreshDeepSeekBalance(profile).catch((error) => {
+    renderDeepSeekBalance("查询失败 · 重试", { low: true, title: `DeepSeek 余额查询失败：${error.message}；点击重试` });
+  });
+}
+
 async function refreshDeepSeekBalance(profile) {
   const key = providerCredentialKey(profile);
   if (state.balanceRefreshPromise && state.balanceRefreshKey === key) return state.balanceRefreshPromise;
@@ -494,7 +559,7 @@ async function refreshDeepSeekBalance(profile) {
       if (!response?.ok) throw new Error(response?.error || "余额查询失败");
       const { providerBalances = {} } = await chrome.storage.local.get("providerBalances");
       await chrome.storage.local.set({ providerBalances: { ...providerBalances, [key]: response.result } });
-      await updateTokenBalance({ refresh: false });
+      await updateDeepSeekBalance(profile, { refresh: false });
       return response.result;
     })
     .finally(() => {
@@ -514,6 +579,12 @@ function updateModeUI() {
   const ready = webMode || Boolean(settings.model && (settings.apiKey || settings.provider === "ollama"));
   ui.connectionModeSelect.value = webMode ? "chatgpt_web" : "api";
   ui.modelButton.classList.toggle("is-ready", ready);
+  const openAI = !webMode && settings.provider === "openai" && SideMindWorkflow.openAIModels.includes(settings.model);
+  const image = openAI && SideMindWorkflow.isImageModel(settings);
+  ui.reasoningButton.hidden = openAI;
+  document.getElementById("openAIEffort").hidden = !openAI || image;
+  document.getElementById("imageQuality").hidden = !image;
+  document.getElementById("imageComplexity").hidden = !image;
   ui.modelName.textContent = webMode ? "ChatGPT 网页" : activeProfileName(settings);
   ui.modelButton.dataset.tooltip = webMode
     ? "使用已登录的 ChatGPT 网页，不读取 Cookie"
@@ -529,27 +600,16 @@ function updateModeUI() {
 }
 
 function currentPromptCharacterLimit() {
-  if (state.settings?.connectionMode === "chatgpt_web") return 12000;
-  const maxOutputTokens = Number(state.settings?.maxOutputTokens || 0);
-  return Math.max(1000, Math.min(120000, Math.floor((Number.isFinite(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : 24000) / 2)));
+  return SideMindWorkflow.inputBudget(state.settings || {});
 }
 
 function updatePromptInputLimit() {
   const limit = currentPromptCharacterLimit();
-  ui.promptInput.maxLength = limit;
-  const wasTruncated = ui.promptInput.value.length > limit;
-  if (wasTruncated) ui.promptInput.value = ui.promptInput.value.slice(0, limit);
-  const atLimit = ui.promptInput.value.length >= limit;
-  if (!atLimit) {
-    ui.promptLimitHint.textContent = "";
-    ui.promptLimitHint.hidden = true;
-    return;
-  }
-  const label = state.settings?.connectionMode === "chatgpt_web"
-    ? "已达到网页交接模式的问题上限 12,000 字"
-    : `已达到问题上限 ${limit.toLocaleString("zh-CN")} 字（当前模型最大输出 Token 的一半）`;
-  ui.promptLimitHint.textContent = wasTruncated ? `${label}；内容已按新模型上限截断。` : label;
-  ui.promptLimitHint.hidden = false;
+  ui.promptInput.removeAttribute("maxlength");
+  const used = ui.promptInput.value.length;
+  ui.promptLimitHint.hidden = used <= limit;
+  ui.promptLimitHint.textContent = used > limit
+    ? `输入已超出预算：${used.toLocaleString()} / ${limit.toLocaleString()} 字（估算）。草稿已保留，请缩短材料或在模型设置中调整输入预算。` : "";
 }
 
 function activeProfileName(settings) {
@@ -644,9 +704,7 @@ function clearSelectedText() {
 }
 
 function pdfContextCharacterBudget() {
-  const maxOutputTokens = Number(state.settings?.maxOutputTokens || 0);
-  const calculated = (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : 16000) * 4;
-  return Math.max(MIN_PDF_CONTEXT_CHARS, Math.min(MAX_PDF_CONTEXT_CHARS, calculated));
+  return Math.min(MAX_PDF_CONTEXT_CHARS, currentPromptCharacterLimit());
 }
 
 function sanitizePdfContext(pdfContext) {
@@ -720,6 +778,7 @@ async function loadPdfFromFile(file) {
     sourceType: "local",
     name: file.name || "本地 PDF"
   });
+  runtime.originalFile = file;
   await replacePdfRuntime(runtime);
   showToast(runtime.textStatus === "scanned"
     ? "已读取扫描件 PDF；请选择页码并切换到视觉模型"
@@ -729,7 +788,9 @@ async function loadPdfFromFile(file) {
 
 async function loadPdfFromUrl(url) {
   const fetched = await SideMindPdf.fetchPublicPdf(url);
+  const originalFile = new File([fetched.bytes], fetched.name || "document.pdf", { type: "application/pdf" });
   const runtime = await SideMindPdf.parsePdfBytes(fetched.bytes, { sourceType: "remote", name: fetched.name, url: fetched.url });
+  runtime.originalFile = originalFile;
   await replacePdfRuntime(runtime);
   showToast(runtime.textStatus === "scanned"
     ? "已读取公共扫描 PDF；请选择页码并切换到视觉模型"
@@ -744,7 +805,7 @@ function renderPdfSourceCard() {
   if (!pdf) return;
   ui.pdfSourceName.textContent = pdf.name;
   ui.pdfSourceName.title = pdf.url || pdf.name;
-  ui.pdfSourceMeta.textContent = `${pdf.sourceType === "remote" ? "公共链接" : "本地文件"} · ${pdf.pageCount} 页`;
+  ui.pdfSourceMeta.textContent = `${pdf.sourceType === "remote" ? "公共链接" : "本地文件"} · ${pdf.pageCount} 页 · 概览覆盖 ${pdf.documentMap?.entries?.length || 0}/${pdf.pageCount} 页`;
   const scanned = pdf.textStatus === "scanned";
   ui.pdfSourceStatus.textContent = pdf.restored
     ? "已从聊天记录恢复 PDF 元数据；如需重新分析全文或按页阅读，请重新附加原文件。"
@@ -880,6 +941,10 @@ async function sendUserPrompt() {
 
 async function performRequest({ displayText, taskPrompt }) {
   if (!ensureImageInputSupported()) return false;
+  if (taskPrompt.length > currentPromptCharacterLimit()) {
+    showToast("问题超出输入预算，草稿已保留，请缩短问题或调整输入预算。");
+    return false;
+  }
   let pdfRequestContext = null;
   try {
     pdfRequestContext = buildPdfRequestContext();
@@ -887,10 +952,29 @@ async function performRequest({ displayText, taskPrompt }) {
     showToast(error.message || "PDF 上下文准备失败");
     return false;
   }
+  const preparedHistory = state.messages.slice(-8);
+  const preparedPrompt = buildPrompt(taskPrompt, preparedHistory, state.attachments, pdfRequestContext);
+  const preparedInstructions = currentSystemInstructions(pdfRequestContext);
+  const budget = SideMindWorkflow.checkBudget(preparedPrompt, preparedInstructions, state.settings);
+  if (!budget.ok) {
+    showToast(`本次问题及材料共 ${budget.used.toLocaleString()} 字，超过 ${budget.limit.toLocaleString()} 字估算预算。请缩小页码、关闭网页上下文或调整输入预算。`);
+    return false;
+  }
   state.busy = true;
   updateComposerState();
   const submittedAttachments = state.attachments.map((item) => ({ ...item }));
   const messageAttachments = await createStoredMessageAttachments(submittedAttachments);
+  if (pdfRequestContext && state.pdfRuntime?.originalFile) {
+    const file = state.pdfRuntime.originalFile;
+    const pdfId = pdfRequestContext.stored.id;
+    const prior = state.messages.some(message => message.attachments?.some(a => a.pdfId === pdfId && a.originalDataUrl));
+    const pdfAttachment = { kind: "file", name: file.name, type: "application/pdf", pdfId };
+    if (!prior) {
+      try { pdfAttachment.originalDataUrl = await readFileAsDataUrl(file); }
+      catch { showToast("PDF 原件未能留存，仍可使用已提取文字"); }
+    }
+    messageAttachments.push(pdfAttachment);
+  }
   if (state.settings?.connectionMode === "chatgpt_web") {
     return performChatGPTHandoff({ displayText, taskPrompt, submittedAttachments, messageAttachments });
   }
@@ -910,35 +994,22 @@ async function performRequest({ displayText, taskPrompt }) {
   const instructions = currentSystemInstructions(pdfRequestContext);
   Object.assign(userMessage, {
     requestPrompt: prompt,
+    sourceSnapshot: SideMindWorkflow.snapshot({ context: state.context, enabled: state.contextEnabled, attachments: submittedAttachments, history: previousMessages, pdf: pdfRequestContext?.stored, prompt }),
     requestInstructions: instructions,
-    requestReasoningEffort: state.reasoningEffort
+    requestReasoningEffort: document.getElementById("openAIEffort").hidden ? state.reasoningEffort : document.getElementById("openAIEffort").value
   });
+  refreshMessage(userMessage);
   await saveConversationDraft();
   setThinking(true);
   updateComposerState();
 
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "AI_REQUEST",
-      requestId,
-      payload: { instructions, prompt, imageDataUrls, reasoningEffort: state.reasoningEffort }
-    });
-    if (response?.cancelled || state.stopRequested) {
-      await saveConversation();
-      showToast("已停止生成");
-      return;
-    }
-    if (!response?.ok) throw new Error(response?.error || "模型请求失败");
-    addMessage("assistant", response.result.text, false, {
-      modelName: currentModelName(),
-      modelId: currentModelId(),
-      modelProfileId: state.settings?.activeProfileId || "",
-      reasoningEffort: state.reasoningEffort,
-      pdfContext: pdfRequestContext?.stored || undefined
-    });
-    await recordTokenUsage(response.result.usage);
+    const response = await displayModelRequest({
+      requestId, payload: { instructions, prompt, imageDataUrls, reasoningEffort: userMessage.requestReasoningEffort }
+    }, { userMessage });
+    if (response?.ok) await recordTokenUsage(response.result.usage);
     clearAttachments();
-    await saveConversation();
+    await saveConversationDraft();
   } catch (error) {
     if (state.stopRequested || error.message === "已停止生成") {
       showToast("已停止生成");
@@ -982,9 +1053,11 @@ async function performChatGPTHandoff({ displayText, taskPrompt, submittedAttachm
   const prompt = `${instructions}${reasoningNote}\n\n${requestPrompt}`;
   Object.assign(userMessage, {
     requestPrompt,
+    sourceSnapshot: SideMindWorkflow.snapshot({ context: state.context, enabled: state.contextEnabled, attachments: submittedAttachments, history: previousMessages, pdf: pdfRequestContext?.stored, prompt: requestPrompt }),
     requestInstructions: instructions,
     requestReasoningEffort: state.reasoningEffort
   });
+  refreshMessage(userMessage);
   await saveConversationDraft();
   updateComposerState();
 
@@ -1204,15 +1277,47 @@ function createMessageElement(message) {
     const navigator = createComparisonNavigator(message);
     if (navigator) body.appendChild(navigator);
   }
-  const attachmentGallery = createMessageAttachmentGallery(message.attachments || []);
+  const attachmentGallery = createMessageAttachmentGallery(visibleMessage.attachments || []);
   if (attachmentGallery) body.appendChild(attachmentGallery);
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
   if (message.role === "assistant") bubble.innerHTML = renderMarkdown(visibleMessage.content, visibleMessage.pdfContext);
   else bubble.textContent = message.content;
   body.appendChild(bubble);
+  if (message.sourceSnapshot) {
+    const details = document.createElement("details");
+    details.className = "source-materials";
+    const summary = document.createElement("summary");
+    summary.textContent = "本次使用材料";
+    const text = document.createElement("p");
+    const snapshot = message.sourceSnapshot;
+    text.textContent = [
+      snapshot.page ? `网页：${snapshot.page.title}（${snapshot.page.url}）` : "未附加网页",
+      ...snapshot.attachments.map((item) => `附件：${item.name}${item.kind === "text" ? ` · 纳入 ${item.sentCharacters ?? item.characters}/${item.characters} 字` : ""}`),
+      snapshot.pdf ? `PDF：${snapshot.pdf.name} · ${snapshot.pdf.range} · 概览覆盖 ${snapshot.pdf.coveredPages}/${snapshot.pdf.pageCount} 页` : "",
+      `最近历史：${snapshot.historyIds.length} 条；请求正文 ${snapshot.promptCharacters} 字`,
+      snapshot.truncated ? "部分材料已截取，PDF 概览仅提供片段。" : "未检测到文字截取标记"
+    ].filter(Boolean).join("\n");
+    details.append(summary, text);
+    body.appendChild(details);
+  }
 
   if (message.role === "assistant") {
+    if (visibleMessage.requestStatus) {
+      const status = document.createElement("p");
+      status.className = "request-status";
+      const labels = { connecting: "连接中", generating: "生成中", completed: "已完成", stopped: "已停止", failed: "失败" };
+      status.textContent = `${labels[visibleMessage.requestStatus] || "未完整结束"} · ${Math.floor((visibleMessage.requestElapsedMs || 0) / 1000)} 秒${visibleMessage.requestError ? " · " + visibleMessage.requestError : ""}`;
+      body.appendChild(status);
+      if (["failed", "stopped"].includes(visibleMessage.requestStatus)) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "secondary-button";
+        retry.dataset.tool = "retry-plain";
+        retry.textContent = "重试普通模式（新请求）";
+        body.appendChild(retry);
+      }
+    }
     const artifactShelf = createArtifactShelf(visibleMessage);
     if (artifactShelf) body.appendChild(artifactShelf);
     const comparisonControls = createComparisonControls(message);
@@ -1220,6 +1325,7 @@ function createMessageElement(message) {
     const tools = document.createElement("div");
     tools.className = "message-tools";
     tools.innerHTML = `
+      ${messageToolButton("favorite-snippet", "收藏回答或选中文字", '<path d="M6 3h12v18l-6-4-6 4V3Z"/>')}
       ${messageToolButton("copy", "复制回答", '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>')}
       ${messageToolButton("save", "保存为本地 Markdown", '<path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 19h14"/>')}
       ${messageToolButton("insert", "写入网页输入框", '<path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="4"/>')}
@@ -1235,6 +1341,7 @@ function createMessageElement(message) {
     tools.className = "message-tools";
     tools.innerHTML = `
       ${messageToolButton("edit", "修改问题", '<path d="m4 20 4.2-1 10-10a2.8 2.8 0 0 0-4-4l-10 10L4 20Z"/><path d="m12.5 6.5 4 4"/>')}
+      ${messageToolButton("favorite-snippet", "收藏回答或选中文字", '<path d="M6 3h12v18l-6-4-6 4V3Z"/>')}
       ${messageToolButton("copy", "复制问题", '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>')}
       ${messageToolButton("quote", "引用问题并继续提问", '<path d="M7 17h4V9H5v5h2v3Zm10 0h2V9h-6v5h4v3Z"/>')}
       ${messageToolButton("share", "分享问题", '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"/>')}
@@ -1255,7 +1362,11 @@ function answerVariantsFor(message) {
     modelId: message.modelId || "",
     modelProfileId: message.modelProfileId || "",
     createdAt: message.createdAt,
-    primary: true
+    primary: true,
+    pdfContext: message.pdfContext,
+    requestStatus: message.requestStatus,
+    requestError: message.requestError,
+    requestElapsedMs: message.requestElapsedMs
   };
   const comparisons = Array.isArray(message.comparisons) ? message.comparisons : [];
   return [primary, ...comparisons.map((item) => ({ ...item, answerVariantId: item.id || item.profileId }))];
@@ -1509,7 +1620,29 @@ async function handleMessageTool(event) {
   const message = state.messages.find((item) => item.id === messageId);
   if (!message) return;
   const visibleMessage = message.role === "assistant" ? visibleAnswerMessage(message) : message;
+  if (state.busy && ["delete", "edit"].includes(tool.dataset.tool)) return showToast("请先停止当前请求再修改或删除");
 
+  if (tool.dataset.tool === "favorite-snippet") {
+    const selection = window.getSelection();
+    const bubble = tool.closest(".message")?.querySelector(".message-bubble");
+    const selected = selection?.rangeCount && bubble?.contains(selection.anchorNode) && bubble?.contains(selection.focusNode) ? selection.toString().trim() : "";
+    const user = message.role === "user" ? message : state.messages[findPreviousMessageIndex(state.messages.indexOf(message), "user")];
+    try {
+      await saveConversation();
+      await SideMindSnippets.save({
+        spaceId: state.currentSpaceId, conversationId: state.conversationId, messageId: message.id,
+        title: state.conversationTitle, content: selected || visibleMessage.content,
+        source: user?.sourceSnapshot?.page?.url || user?.pdfContext?.name || state.conversationTitle,
+        modelName: visibleMessage.modelName || "", answerVariantId: visibleMessage.answerVariantId || ""
+      });
+      showToast("已收藏，可在聊天历史的“收藏片段”中查看");
+    } catch (error) { showToast(`收藏失败：${error.message}`); }
+    return;
+  }
+  if (tool.dataset.tool === "retry-plain") {
+    await regenerateAssistantMessage(message, { stream: false });
+    return;
+  }
   if (tool.dataset.tool === "copy") {
     await navigator.clipboard.writeText(visibleMessage.content);
     showToast("已复制到剪贴板");
@@ -1604,6 +1737,15 @@ async function editUserQuestion(message) {
   const limit = currentPromptCharacterLimit();
   if (content.length > limit) return showToast(`问题最多 ${limit.toLocaleString("zh-CN")} 字`);
   if (content === message.content) return;
+  const previousTask = message.taskPrompt || message.content;
+  const suffix = `用户当前任务：\n${previousTask}`;
+  if (message.requestPrompt?.endsWith(suffix)) {
+    message.requestPrompt = message.requestPrompt.slice(0, -suffix.length) + `用户当前任务：\n${content}`;
+    if (message.sourceSnapshot) message.sourceSnapshot.promptCharacters = message.requestPrompt.length;
+  } else {
+    delete message.requestPrompt;
+    delete message.requestInstructions;
+  }
   message.content = content;
   message.taskPrompt = content;
   message.updatedAt = Date.now();
@@ -1808,7 +1950,7 @@ function quoteMessage(message) {
   const excerpt = message.content.slice(0, 1800).split("\n").map((line) => `> ${line}`).join("\n");
   const existing = ui.promptInput.value.trim();
   const quotedPrompt = `引用这段回答继续提问：\n${excerpt}${message.content.length > 1800 ? "\n> ……" : ""}\n\n${existing}`;
-  ui.promptInput.value = quotedPrompt.slice(0, Number(ui.promptInput.maxLength) || 12000);
+  ui.promptInput.value = quotedPrompt;
   autoResizeTextarea();
   updateComposerState();
   ui.promptInput.focus();
@@ -1831,73 +1973,25 @@ async function switchComparisonAnswer(message, step) {
 async function fetchAlternativeAnswer(sourceMessage, profileId, triggerButton) {
   if (state.busy) return showToast("请等待当前模型请求完成");
   const profile = state.settings?.modelProfiles?.find((item) => item.id === profileId);
-  if (!profile?.model) return showToast("这个模型配置已不存在，请在设置中重新选择");
-  if (!profile.apiKey && profile.provider !== "ollama") return showToast("这个模型尚未配置 API Key");
-
-  const assistantIndex = state.messages.findIndex((item) => item.id === sourceMessage.id);
-  const userIndex = findPreviousMessageIndex(assistantIndex, "user");
+  if (!profile?.model || (!profile.apiKey && profile.provider !== "ollama")) return showToast("请先配置这个模型");
+  const userIndex = findPreviousMessageIndex(state.messages.indexOf(sourceMessage), "user");
   const userMessage = state.messages[userIndex];
-  if (!userMessage) return showToast("没有找到这条回答对应的问题");
-  const attachments = Array.isArray(userMessage.attachments) ? userMessage.attachments : [];
-  const imageAttachments = attachments.filter((item) => item.kind === "image");
+  let replay;
+  try { replay = SideMindWorkflow.replay(userMessage); } catch (error) { return showToast(error.message); }
+  const attachments = userMessage.attachments || [];
+  if (attachments.some((item) => item.kind === "image" && !item.dataUrl)) return showToast("原图片没有完整保留，请重新附加。");
   const imageDataUrls = getImageDataUrls(attachments);
-  if (imageAttachments.some((item) => !item.dataUrl) || (userMessage.hadAttachments && !userMessage.requestPrompt && !attachments.length)) {
-    return showToast("原问题的图片或附件没有保留，请重新附加后再比较");
-  }
-  if (!userMessage.requestPrompt && userMessage.hadNonImageAttachments) {
-    return showToast("旧记录没有保留文本附件内容，请重新发送后再比较");
-  }
-  if (imageDataUrls.length && isKnownTextOnlyProfile(profile)) {
-    return showToast(`${profile.name || profile.model} 只支持文本，不能比较这条图片问题`);
-  }
-
+  if (imageDataUrls.length && !profileSupportsVision(profile)) return showToast("请切换到已配置支持视觉输入的模型。");
   state.busy = true;
   const requestId = beginModelRequest();
-  triggerButton.disabled = true;
-  triggerButton.querySelector("b")?.replaceChildren("生成中…");
   triggerButton.closest(".comparison-model-menu").hidden = true;
   setThinking(true);
   updateComposerState();
-
-  const previousMessages = state.messages.slice(0, userIndex).slice(-8);
-  const prompt = userMessage.requestPrompt
-    || buildPrompt(userMessage.taskPrompt || userMessage.content, previousMessages, attachments);
-  const instructions = userMessage.requestInstructions || currentSystemInstructions();
-  const reasoningEffort = userMessage.requestReasoningEffort || sourceMessage.reasoningEffort || state.reasoningEffort;
-
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "AI_REQUEST",
-      requestId,
-      profileId,
-      payload: { instructions, prompt, imageDataUrls, reasoningEffort }
-    });
-    if (response?.cancelled || state.stopRequested) return showToast("已停止获取对比答案");
-    if (!response?.ok) throw new Error(response?.error || "对比答案请求失败");
-    const comparison = {
-      id: crypto.randomUUID(),
-      profileId,
-      modelName: profile.name || profile.model,
-      modelId: profile.model,
-      provider: profile.provider,
-      content: response.result.text,
-      createdAt: Date.now()
-    };
-    const existing = Array.isArray(sourceMessage.comparisons) ? sourceMessage.comparisons : [];
-    sourceMessage.comparisons = [...existing.filter((item) => item.profileId !== profileId), comparison];
-    sourceMessage.comparisonActiveIndex = sourceMessage.comparisons.findIndex((item) => item.id === comparison.id) + 1;
-    await recordTokenUsage(response.result.usage, profile);
-    const oldElement = ui.messageList.querySelector(`[data-message-id="${sourceMessage.id}"]`);
-    oldElement?.replaceWith(createMessageElement(sourceMessage));
-    await saveConversation();
-    showToast(`已获取 ${comparison.modelName} 的答案`);
-  } catch (error) {
-    showToast(state.stopRequested || error.message === "已停止生成" ? "已停止获取对比答案" : error.message);
+    const response = await displayModelRequest({ requestId, profileId, payload: { ...replay, imageDataUrls } }, { userMessage, group: sourceMessage, profile });
+    if (response.ok) await recordTokenUsage(response.result.usage, profile);
+    await saveConversationDraft();
   } finally {
-    if (triggerButton.isConnected) {
-      triggerButton.disabled = false;
-      triggerButton.querySelector("b")?.replaceChildren("重试");
-    }
     finishModelRequest(requestId);
     state.busy = false;
     setThinking(false);
@@ -1912,60 +2006,105 @@ async function openComparisonPage(sourceMessage) {
   await chrome.tabs.create({ url });
 }
 
-async function regenerateAssistantMessage(message) {
+async function regenerateAssistantMessage(message, { stream = true } = {}) {
   if (state.busy) return showToast("请等待当前请求完成");
-  if (state.settings?.connectionMode === "chatgpt_web") {
-    return showToast("网页交接模式请在 ChatGPT 页面使用重新生成");
-  }
-  const assistantIndex = state.messages.findIndex((item) => item.id === message.id);
-  if (assistantIndex < 0 || assistantIndex !== state.messages.length - 1) {
-    return showToast("目前只能重新生成最新一条回答");
-  }
-  const userIndex = findPreviousMessageIndex(assistantIndex, "user");
-  const userMessage = state.messages[userIndex];
-  if (!userMessage) return showToast("没有找到这条回答对应的问题");
-  const replayImages = getImageDataUrls(userMessage.attachments || []);
-  if (userMessage.hadNonImageAttachments || (userMessage.hadAttachments && !replayImages.length)) {
-    return showToast("原请求包含未保留内容的附件，请重新附加后再发送");
-  }
-  if (!ensureModelConfigured()) return;
-
+  if (state.settings?.connectionMode === "chatgpt_web") return showToast("请在 ChatGPT 页面重新生成");
+  const userMessage = state.messages[findPreviousMessageIndex(state.messages.indexOf(message), "user")];
+  let replay;
+  try { replay = SideMindWorkflow.replay(userMessage); } catch (error) { return showToast(error.message); }
+  const visible = visibleAnswerMessage(message);
+  const profileId = stream ? state.settings.activeProfileId : visible.profileId || visible.modelProfileId;
+  const profile = state.settings.modelProfiles.find((item) => item.id === profileId) || activeModelProfile();
+  if (!profile?.model || (!profile.apiKey && profile.provider !== "ollama")) return showToast("请先配置模型");
+  const attachments = userMessage.attachments || [];
+  if (attachments.some((item) => item.kind === "image" && !item.dataUrl)) return showToast("原图片没有完整保留，请重新附加。");
+  const imageDataUrls = getImageDataUrls(attachments);
+  if (imageDataUrls.length && !profileSupportsVision(profile)) return showToast("请切换到支持视觉输入的模型");
   state.busy = true;
   const requestId = beginModelRequest();
   setThinking(true);
   updateComposerState();
-  const previousMessages = state.messages.slice(0, userIndex).slice(-8);
-  const prompt = buildPrompt(userMessage.taskPrompt || userMessage.content, previousMessages, userMessage.attachments || []);
-
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "AI_REQUEST",
-      requestId,
-      payload: { instructions: currentSystemInstructions(), prompt, imageDataUrls: replayImages, reasoningEffort: state.reasoningEffort }
-    });
-    if (response?.cancelled || state.stopRequested) return showToast("已停止生成");
-    if (!response?.ok) throw new Error(response?.error || "重新生成失败");
-    message.content = response.result.text;
-    message.createdAt = Date.now();
-    message.modelName = currentModelName();
-    message.modelId = currentModelId();
-    message.modelProfileId = state.settings?.activeProfileId || "";
-    message.reasoningEffort = state.reasoningEffort;
-    message.comparisons = [];
-    message.comparisonActiveIndex = 0;
-    await recordTokenUsage(response.result.usage);
-    const oldElement = ui.messageList.querySelector(`[data-message-id="${message.id}"]`);
-    oldElement?.replaceWith(createMessageElement(message));
-    await saveConversation();
-    showToast("已重新生成回答");
-  } catch (error) {
-    showToast(state.stopRequested || error.message === "已停止生成" ? "已停止生成" : error.message);
+    const response = await displayModelRequest({ requestId, profileId: profile.id, payload: { ...replay, imageDataUrls, stream } }, { userMessage, group: message, profile });
+    if (response.ok) await recordTokenUsage(response.result.usage, profile);
+    await saveConversationDraft();
   } finally {
     finishModelRequest(requestId);
     state.busy = false;
     setThinking(false);
     updateComposerState();
   }
+}
+
+// All requests use an immutable per-turn prompt. Alternative/retried answers retain older results.
+async function displayModelRequest(request, { userMessage, group = null, profile = activeModelProfile() }) {
+  request.profileId ??= profile?.id;
+  if (SideMindWorkflow.isImageModel(profile)) {
+    request.payload.quality = document.getElementById("imageQuality").value;
+    request.payload.complexity = document.getElementById("imageComplexity").value;
+  }
+  const budget = SideMindWorkflow.checkBudget(request.payload.prompt, request.payload.instructions, { ...state.settings, ...profile });
+  if (!budget.ok) {
+    showToast(`原轮材料 ${budget.used} 字，超过此模型的 ${budget.limit} 字估算预算。请调整输入预算或重新选择材料。`);
+    return { ok: false };
+  }
+  const metadata = { modelName: profile?.name || currentModelName(), modelId: profile?.model || currentModelId(),
+    modelProfileId: profile?.id || "", profileId: profile?.id || "", pdfContext: userMessage.pdfContext,
+    requestStatus: "connecting", requestError: "", createdAt: Date.now(), reasoningEffort: request.payload.reasoningEffort };
+  let answer;
+  if (group) {
+    answer = { id: crypto.randomUUID(), content: "", ...metadata };
+    group.comparisons = [...(group.comparisons || []), answer];
+    group.comparisonActiveIndex = group.comparisons.length;
+    refreshMessage(group);
+  } else {
+    answer = addMessage("assistant", "", false, metadata);
+    group = answer;
+  }
+  let lastPaint = 0;
+  let lastSave = Date.now();
+  const response = await SideMindModelClient.request(request, {
+    onText(text) {
+      if (state.activeRequestId !== request.requestId) return;
+      answer.content = text;
+      answer.requestStatus = "generating";
+      if (Date.now() - lastPaint > 100) {
+        refreshMessage(group, true);
+        lastPaint = Date.now();
+      }
+      if (Date.now() - lastSave > 2500) {
+        lastSave = Date.now();
+        saveConversationDraft();
+      }
+    },
+    onStatus({ phase, elapsedMs }) {
+      if (state.activeRequestId !== request.requestId) return;
+      answer.requestElapsedMs = elapsedMs;
+      ui.thinkingRow.querySelector(".thinking-bubble span").textContent = `${phase} · ${Math.floor(elapsedMs / 1000)} 秒`;
+    }
+  });
+  answer.content = response.partialText || "";
+  if (response.result?.image) answer.attachments = [{ kind: "image", name: "生成图片", type: "image/png", dataUrl: response.result.image }];
+  answer.requestStatus = response.status;
+  answer.requestError = response.ok ? "" : response.error || (response.cancelled ? "已停止生成" : "请求没有完成");
+  answer.requestElapsedMs = response.metrics.elapsedMs;
+  answer.firstTokenMs = response.metrics.firstTokenMs;
+  refreshMessage(group);
+  await saveConversationDraft();
+  return response;
+}
+
+function refreshMessage(message, incremental = false) {
+  const nearBottom = ui.contentArea.scrollHeight - ui.contentArea.scrollTop - ui.contentArea.clientHeight < 80;
+  const element = ui.messageList.querySelector(`[data-message-id="${message.id}"]`);
+  if (incremental) {
+    const visible = visibleAnswerMessage(message);
+    const bubble = element?.querySelector(".message-bubble");
+    if (bubble) bubble.innerHTML = renderMarkdown(visible.content, visible.pdfContext);
+  } else {
+    element?.replaceWith(createMessageElement(message));
+  }
+  if (nearBottom) requestAnimationFrame(() => { ui.contentArea.scrollTop = ui.contentArea.scrollHeight; });
 }
 
 function findPreviousMessageIndex(startIndex, role) {
@@ -2629,6 +2768,8 @@ async function createStoredMessageAttachments(attachments) {
       type: attachment.type || "",
       originalSize: Number(attachment.size) || estimateAttachmentBytes(attachment)
     };
+    if (attachment.kind === "image") metadata.originalDataUrl = attachment.dataUrl;
+    else if (attachment.originalDataUrl) metadata.originalDataUrl = attachment.originalDataUrl;
     if (attachment.kind !== "image" || !attachment.dataUrl) {
       stored.push(metadata);
       continue;
@@ -2802,7 +2943,7 @@ async function addFilesToAttachments(files) {
     if (file.type.startsWith("image/")) {
       if (addAttachment({ name: file.name, kind: "image", type: file.type, size: file.size, dataUrl: await readFileAsDataUrl(file) })) { added += 1; regularAdded += 1; }
     } else if (/^(text\/|application\/json)/.test(file.type) || /\.(txt|md|csv|json|html)$/i.test(file.name)) {
-      if (addAttachment({ name: file.name, kind: "text", type: file.type || "text/plain", size: file.size, text: await file.text() })) { added += 1; regularAdded += 1; }
+      if (addAttachment({ name: file.name, kind: "text", type: file.type || "text/plain", size: file.size, originalDataUrl: await readFileAsDataUrl(file), text: await file.text() })) { added += 1; regularAdded += 1; }
     } else {
       showToast(`${file.name} 暂不支持；当前支持图片和文本文件`);
     }
@@ -2883,7 +3024,12 @@ function startNewChat({ skipConfirmation = false } = {}) {
 }
 
 async function saveConversation() {
-  if (!state.messages.length) return;
+  const operation = () => saveConversationUnlocked();
+  return navigator.locks ? navigator.locks.request("sidemind-history", operation) : operation();
+}
+
+async function saveConversationUnlocked() {
+  if (state.dataRestoring || !state.messages.length) return;
   const { conversations = [], uiPreferences = {} } = await chrome.storage.local.get(["conversations", "uiPreferences"]);
   const stored = Array.isArray(conversations) ? conversations : [];
   const now = Date.now();
@@ -2912,12 +3058,9 @@ async function saveConversation() {
     createdAt: state.conversationCreatedAt,
     updatedAt: now,
     pdfContext: sanitizePdfContext(state.pdfContext),
-    messages: prepareMessagesForStorage(state.messages.slice(-30))
+    messages: prepareMessagesForStorage(state.messages)
   };
-  const next = [conversation, ...stored.filter((item) => item.id !== conversation.id)]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 200);
-  while (next.length > 1 && new Blob([JSON.stringify(next)]).size > 8 * 1024 * 1024) next.pop();
+  const next = SideMindWorkflow.upsert(stored, conversation);
   state.lastConversationId = conversation.id;
   await chrome.storage.local.set({
     conversations: next,
@@ -2928,8 +3071,24 @@ async function saveConversation() {
 async function saveConversationDraft() {
   try {
     await saveConversation();
+    document.getElementById("historySaveFailure")?.remove();
   } catch (error) {
-    showToast(`消息已发送，但本地历史保存失败：${error.message || "存储空间不足"}`);
+    showToast(`本地历史保存失败：${error.message || "存储空间不足"}。旧记录未自动删除。`);
+    if (!document.getElementById("historySaveFailure")) {
+      const notice = document.createElement("div");
+      notice.id = "historySaveFailure";
+      notice.className = "storage-failure";
+      notice.setAttribute("role", "alert");
+      const label = document.createElement("span");
+      label.textContent = "历史未保存，请先导出（包含当前内存中的文字），再清理空间。";
+      const backup = document.createElement("button");
+      backup.type = "button"; backup.textContent = "导出当前空间";
+      backup.onclick = () => exportCurrentSpaceHistory();
+      const manage = document.createElement("button");
+      manage.type = "button"; manage.textContent = "管理历史"; manage.onclick = () => openHistory();
+      notice.append(label, backup, manage);
+      ui.contentArea.prepend(notice);
+    }
   }
 }
 
@@ -2952,6 +3111,7 @@ function prepareMessagesForStorage(messages) {
         attachment.storedBytes = storedBytes;
         remainingBytes -= storedBytes;
       } else {
+        if (prepared[messageIndex].role === "assistant") attachment.originalDataUrl ??= attachment.dataUrl;
         delete attachment.dataUrl;
         delete attachment.storedBytes;
         attachment.previewUnavailable = true;
@@ -2977,7 +3137,7 @@ async function setHistoryFilter(filter) {
   await renderHistory();
 }
 
-async function renderHistory({ focusCurrent = false } = {}) {
+async function renderHistory({ focusCurrent = false, limit = 30 } = {}) {
   const renderToken = ++state.historyRenderToken;
   const { conversations = [] } = await chrome.storage.local.get("conversations");
   if (renderToken !== state.historyRenderToken) return;
@@ -2997,7 +3157,8 @@ async function renderHistory({ focusCurrent = false } = {}) {
     ui.historyList.appendChild(empty);
   } else {
     let currentRow = null;
-    for (const conversation of filtered) {
+    if (focusCurrent) limit = Math.max(limit, filtered.findIndex((item) => item.id === state.conversationId) + 1);
+    for (const conversation of filtered.slice(0, limit)) {
       const row = document.createElement("div");
       const isCurrent = conversation.id === state.conversationId;
       row.className = `history-item-row${isCurrent ? " is-current" : ""}${conversation.favorite ? " is-favorite" : ""}`;
@@ -3036,11 +3197,24 @@ async function renderHistory({ focusCurrent = false } = {}) {
       ui.historyList.appendChild(row);
       if (isCurrent) currentRow = row;
     }
+    if (filtered.length > limit) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "history-load-more";
+      more.textContent = `加载更多（已显示 ${limit} / ${filtered.length}）`;
+      more.onclick = () => renderHistory({ limit: limit + 30 });
+      ui.historyList.appendChild(more);
+    }
     if (focusCurrent && currentRow) requestAnimationFrame(() => currentRow.scrollIntoView({ block: "center" }));
   }
 }
 
 async function editConversationTitle(conversation) {
+  const operation = () => editConversationTitleUnlocked(conversation);
+  return navigator.locks ? navigator.locks.request("sidemind-history", operation) : operation();
+}
+
+async function editConversationTitleUnlocked(conversation) {
   const input = window.prompt("修改聊天标题", conversation.title || "新对话");
   if (input === null) return;
   const title = input.replace(/\s+/g, " ").trim().slice(0, 80);
@@ -3060,6 +3234,11 @@ async function editConversationTitle(conversation) {
 }
 
 async function toggleConversationFavorite(conversation) {
+  const operation = () => toggleConversationFavoriteUnlocked(conversation);
+  return navigator.locks ? navigator.locks.request("sidemind-history", operation) : operation();
+}
+
+async function toggleConversationFavoriteUnlocked(conversation) {
   const { conversations = [] } = await chrome.storage.local.get("conversations");
   const favorite = !conversation.favorite;
   const next = (Array.isArray(conversations) ? conversations : []).map((item) => item.id === conversation.id
@@ -3070,6 +3249,11 @@ async function toggleConversationFavorite(conversation) {
 }
 
 async function deleteConversationFromHistory(conversation) {
+  const operation = () => deleteConversationFromHistoryUnlocked(conversation);
+  return navigator.locks ? navigator.locks.request("sidemind-history", operation) : operation();
+}
+
+async function deleteConversationFromHistoryUnlocked(conversation) {
   if (state.busy) return showToast("当前回答仍在生成，暂不能删除聊天记录");
   if (!window.confirm(`确定删除“${conversation.title || "新对话"}”吗？聊天内容和关联工件将被删除，且无法撤销。`)) return;
   const { conversations = [], localArtifacts = [], uiPreferences = {} } = await chrome.storage.local.get(["conversations", "localArtifacts", "uiPreferences"]);
@@ -3104,7 +3288,16 @@ async function restoreConversation(conversation, { skipConfirmation = false, sho
     state.currentSpaceId = conversationSpaceId;
     updateSpaceUI();
   }
-  state.messages = conversation.messages || [];
+  const recover = (message) => {
+    const result = { ...message };
+    if (["connecting", "generating"].includes(result.requestStatus)) {
+      result.requestStatus = "failed";
+      result.requestError = "上次会话在生成时关闭，已保留当时收到的内容。";
+    }
+    if (result.comparisons) result.comparisons = result.comparisons.map(recover);
+    return result;
+  };
+  state.messages = (conversation.messages || []).map(recover);
   state.conversationId = conversation.id;
   state.conversationCreatedAt = conversation.createdAt;
   state.conversationTitle = conversation.title || "";
@@ -3127,6 +3320,11 @@ async function restoreConversation(conversation, { skipConfirmation = false, sho
 }
 
 async function clearHistory() {
+  const operation = () => clearHistoryUnlocked();
+  return navigator.locks ? navigator.locks.request("sidemind-history", operation) : operation();
+}
+
+async function clearHistoryUnlocked() {
   if (state.busy) {
     showToast("当前回答仍在生成，暂不能清空历史记录");
     return;
@@ -3144,6 +3342,11 @@ async function clearHistory() {
 }
 
 async function importHistoryFile(event) {
+  const operation = () => importHistoryFileUnlocked(event);
+  return navigator.locks ? navigator.locks.request("sidemind-history", operation) : operation();
+}
+
+async function importHistoryFileUnlocked(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
@@ -3159,9 +3362,7 @@ async function importHistoryFile(event) {
     if (!imported.length) return showToast("这些聊天记录已经导入过了");
 
     const next = [...imported, ...stored]
-      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
-      .slice(0, 200);
-    while (next.length > 1 && new Blob([JSON.stringify(next)]).size > 8 * 1024 * 1024) next.pop();
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
     await chrome.storage.local.set({ conversations: next });
     await renderHistory();
     showToast(`已导入 ${imported.length} 个会话到${currentSpaceName()}`);
@@ -3183,20 +3384,27 @@ function currentSpaceName() {
   return state.spaces.find((item) => item.id === state.currentSpaceId)?.name || DEFAULT_SPACE.name;
 }
 
-async function exportCurrentSpaceHistory() {
+async function exportCurrentSpaceHistory(asZip = false) {
   const { conversations = [] } = await chrome.storage.local.get("conversations");
-  const history = (Array.isArray(conversations) ? conversations : [])
+  const active = state.messages.length ? {
+    id: state.conversationId || "unsaved", title: state.conversationTitle || state.messages.find((item) => item.role === "user")?.content?.slice(0, 52) || "当前会话",
+    createdAt: state.conversationCreatedAt || Date.now(), updatedAt: Date.now(),
+    spaceId: state.currentSpaceId, pageTitle: state.context?.title || "", url: state.context?.url || "", messages: state.messages
+  } : null;
+  const all = active ? SideMindWorkflow.upsert(Array.isArray(conversations) ? conversations : [], active) : conversations;
+  const history = (Array.isArray(all) ? all : [])
     .filter((conversation) => (conversation.spaceId || DEFAULT_SPACE.id) === state.currentSpaceId)
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
   if (!history.length) return showToast("当前空间还没有可导出的聊天记录");
 
   const space = state.spaces.find((item) => item.id === state.currentSpaceId) || DEFAULT_SPACE;
-  const markdown = buildHistoryExportMarkdown(space, history);
   const date = new Date();
   const pad = (value) => String(value).padStart(2, "0");
   const dateLabel = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
   const safeSpaceName = String(space.name || "默认空间").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 36) || "默认空间";
-  downloadLocalText(`SideMind-聊天历史-${safeSpaceName}-${dateLabel}.md`, markdown);
+  const filename = `SideMind-聊天历史-${safeSpaceName}-${dateLabel}`;
+  if (asZip === true) downloadBlob(filename + ".zip", await SideMindHistoryArchive.build(space, history));
+  else downloadLocalText(filename + ".md", buildHistoryExportMarkdown(space, history));
   showToast(`已导出 ${history.length} 个会话`);
 }
 
@@ -3247,6 +3455,10 @@ function togglePopover(type) {
   if (type === "model") {
     renderModelProfiles();
     updateTokenBalance({ refresh: true }).catch(() => {});
+    const deepSeekProfile = state.settings?.modelProfiles?.find((profile) => profile.provider === "deepseek");
+    if (deepSeekProfile && state.settings?.connectionMode !== "chatgpt_web" && activeModelProfile()?.provider !== "deepseek") {
+      updateDeepSeekBalance(deepSeekProfile).catch(() => {});
+    }
   }
   if (type === "prompt") {
     ui.promptSearchInput.value = "";
@@ -3319,13 +3531,31 @@ function renderModelProfiles() {
     const count = document.createElement("small");
     count.textContent = `${providerProfiles.length} 个模型`;
     meta.appendChild(count);
+    if (provider === "openai") {
+      const billing = document.createElement("a");
+      billing.className = "model-provider-balance";
+      billing.href = "https://platform.openai.com/settings/organization/billing/overview";
+      billing.target = "_blank";
+      billing.rel = "noopener noreferrer";
+      billing.title = "查看 OpenAI 余额（新标签页）";
+      billing.setAttribute("aria-label", billing.title);
+      billing.innerHTML = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M6 15h4"/></svg>';
+      meta.appendChild(billing);
+    }
     if (provider === "deepseek") {
       const balance = document.createElement("button");
       balance.type = "button";
-      balance.className = `model-provider-balance${state.tokenBalance?.low ? " is-low" : ""}`;
-      balance.textContent = state.tokenBalance?.text?.replace(/^DeepSeek 余额：/, "") || "读取余额…";
-      balance.title = state.tokenBalance?.title || "点击查询 DeepSeek 官方余额";
-      balance.addEventListener("click", () => updateTokenBalance({ refresh: true }));
+      balance.className = `model-provider-balance${state.deepSeekBalance?.low ? " is-low" : ""}`;
+      balance.textContent = state.deepSeekBalance?.text || "读取余额…";
+      balance.title = state.deepSeekBalance?.title || "点击查询 DeepSeek 官方余额";
+      balance.setAttribute("aria-label", `DeepSeek 余额：${balance.textContent}，点击刷新`);
+      balance.addEventListener("click", (event) => {
+        event.stopPropagation();
+        renderDeepSeekBalance("读取余额…", { title: "正在读取 DeepSeek 官方余额" });
+        refreshDeepSeekBalance(providerProfiles[0]).catch((error) => {
+          renderDeepSeekBalance("查询失败 · 重试", { low: true, title: `DeepSeek 余额查询失败：${error.message}；点击重试` });
+        });
+      });
       meta.appendChild(balance);
     }
     heading.append(icon, name, meta);
@@ -3392,6 +3622,7 @@ async function runPromptTemplate(promptId) {
   const prompt = state.prompts.find((item) => item.id === promptId);
   if (!prompt || state.busy || !ensureModelConfigured()) return;
   closePopovers();
+  const composerDraft = ui.promptInput.value;
   const variableNames = extractTemplateVariables(prompt.content);
   const values = { lang: currentResponseLanguage() };
   const editableVariables = variableNames.filter((name) => name !== "lang");
@@ -3399,11 +3630,7 @@ async function runPromptTemplate(promptId) {
     const collected = await requestTemplateVariables(prompt, editableVariables, variableNames.includes("lang"));
     if (!collected) return;
     Object.assign(values, collected);
-    if (state.templateVariableConsumedComposer) {
-      ui.promptInput.value = "";
-      autoResizeTextarea();
-      updateComposerState();
-    }
+
   }
   const taskPrompt = interpolatePromptTemplate(prompt.content, values);
   const unresolved = extractTemplateVariables(taskPrompt);
@@ -3414,7 +3641,12 @@ async function runPromptTemplate(promptId) {
   const selection = state.context?.selection?.trim();
   const target = selection && !variableNames.includes("input")
     ? `\n\n需要处理的选中文本：\n<selected_text>\n${selection}\n</selected_text>` : "";
-  await performRequest({ displayText: prompt.name, taskPrompt: taskPrompt + target });
+  const accepted = await performRequest({ displayText: prompt.name, taskPrompt: taskPrompt + target });
+  if (accepted !== false && state.templateVariableConsumedComposer && ui.promptInput.value === composerDraft) {
+    ui.promptInput.value = "";
+    autoResizeTextarea();
+    updateComposerState();
+  }
 }
 
 function requestTemplateVariables(prompt, variableNames, usesResponseLanguage) {
@@ -3656,7 +3888,7 @@ function isKnownTextOnlyProfile(profile) {
 function updateComposerState() {
   updatePromptInputLimit();
   const canStop = state.busy && Boolean(state.activeRequestId) && !state.stopRequested;
-  ui.sendButton.disabled = state.busy ? !canStop : (!ui.promptInput.value.trim() && !state.attachments.length);
+  ui.sendButton.disabled = state.busy ? !canStop : ((!ui.promptInput.value.trim() && !state.attachments.length && !state.pdfContext) || ui.promptInput.value.length > currentPromptCharacterLimit());
   ui.sendButton.classList.toggle("is-stop", state.busy && Boolean(state.activeRequestId));
   ui.sendButton.setAttribute("aria-label", state.busy && state.activeRequestId ? "停止生成" : "发送");
   ui.sendButton.dataset.tooltip = state.busy && state.activeRequestId ? "停止生成：立即取消当前模型请求" : "发送消息：Enter 发送，Shift + Enter 换行";
@@ -3737,7 +3969,7 @@ function renderMarkdown(markdown, pdfContext = null) {
     }
     if (/^@@CODEBLOCK\d+@@$/.test(line)) {
       closeList();
-      output.push(line);
+      output.push(codeBlocks[Number(line.slice(11, -2))] || line);
       continue;
     }
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
@@ -3763,13 +3995,34 @@ function renderMarkdown(markdown, pdfContext = null) {
     output.push(`<p>${formatInline(line, pdfContext)}</p>`);
   }
   closeList();
-  safe = output.join("");
-  return safe.replace(/@@CODEBLOCK(\d+)@@/g, (_match, index) => codeBlocks[Number(index)] || "");
+  return output.join("");
 }
 
 function formatInline(text, pdfContext = null) {
+  const parts = [];
+  let offset = 0;
+  // Work on HTML-escaped text. Keep code and link attributes out of later formatting passes.
+  const tokens = /`([^`]+)`|(!?)\[([^\]\n]*)\]\\?\((https?\\?:\/\/[^\s()<>"\\]+)\\?\)/gi;
+  for (const match of text.matchAll(tokens)) {
+    parts.push(formatInlineText(text.slice(offset, match.index), pdfContext));
+    offset = match.index + match[0].length;
+    if (match[1] !== undefined) {
+      parts.push(`<code>${match[1]}</code>`);
+      continue;
+    }
+    const [, , image, label, target] = match;
+    const url = target.replace("\\:", ":");
+    const content = image && /^https:\/\//i.test(url)
+      ? `<img class="chat-inline-image" src="${url}" alt="${label || "图片"}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`
+      : label || url;
+    parts.push(`<a href="${url}" target="_blank" rel="noopener noreferrer">${content}</a>`);
+  }
+  parts.push(formatInlineText(text.slice(offset), pdfContext));
+  return parts.join("");
+}
+
+function formatInlineText(text, pdfContext) {
   const formatted = text
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/__([^_]+)__/g, "<strong>$1</strong>");
   if (!pdfContext?.pageCount) return formatted;

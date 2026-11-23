@@ -5,15 +5,16 @@ const DEFAULTS = {
   fontSizeScale: "comfortable", activeProfileId: "default", modelProfiles: [], modelProfileLibraryVersion: 0, tokenBudget: 0
 };
 
-const MODEL_PROFILE_LIBRARY_VERSION = 5;
+const MODEL_PROFILE_LIBRARY_VERSION = 6;
 const BUILT_IN_MODEL_PROFILES = [
+  ...SideMindWorkflow.openAIProfiles,
   { id: "builtin-openai", name: "OpenAI · GPT-5.6 Terra", provider: "openai", apiMode: "responses", baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-5.6-terra", maxOutputTokens: 16000, supportsVision: true },
   { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-flash", maxOutputTokens: 16000, supportsVision: false },
   { id: "builtin-deepseek-pro", name: "DeepSeek · V4 Pro", provider: "deepseek", apiMode: "chat", baseUrl: "https://api.deepseek.com", apiKey: "", model: "deepseek-v4-pro", maxOutputTokens: 16000, supportsVision: false }
 ];
 
 const PROVIDER_MODELS = {
-  openai: ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"],
+  openai: [...SideMindWorkflow.openAIModels, "gpt-5.5", "gpt-5.4-mini"],
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
   ollama: [],
   openrouter: ["~openai/gpt-latest"],
@@ -21,7 +22,7 @@ const PROVIDER_MODELS = {
 };
 
 const PROVIDER_PRESETS = {
-  openai: { apiMode: "responses", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra", maxLimit: 128000, tokenHint: "GPT-5.6 最高可配置 128,000；日常网页总结建议使用 4,000—16,000。" },
+  openai: { apiMode: "responses", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-terra", maxLimit: null, tokenHint: "请按所选模型的单次最大输出填写。超过模型上限时，API 可能拒绝请求。" },
   deepseek: { apiMode: "chat", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash", maxLimit: 384000, tokenHint: "DeepSeek V4 当前最大输出为 384,000，但官方 API 仅支持文本输入；图片请切换到视觉模型或 ChatGPT 网页模式。" },
   ollama: { apiMode: "chat", baseUrl: "http://127.0.0.1:11434", model: "", maxLimit: null, tokenHint: "Ollama 会自动使用 /v1/chat/completions；输出上限取决于本地模型和内存。" },
   openrouter: { apiMode: "chat", baseUrl: "https://openrouter.ai/api/v1", model: "~openai/gpt-latest", maxLimit: null, tokenHint: "OpenRouter 的输出上限由所选路由模型决定，请按对应模型能力设置。" },
@@ -33,7 +34,7 @@ const form = document.getElementById("settingsForm");
 const fields = {
   connectionMode: document.getElementById("connectionMode"), responseLanguage: document.getElementById("responseLanguage"), startupBehavior: document.getElementById("startupBehavior"), fontSizeScale: document.getElementById("fontSizeScale"), profileSelect: document.getElementById("profileSelect"), profileName: document.getElementById("profileName"),
   provider: document.getElementById("provider"), apiMode: document.getElementById("apiMode"), baseUrl: document.getElementById("baseUrl"),
-  apiKey: document.getElementById("apiKey"), tokenBudget: document.getElementById("tokenBudget"), modelPreset: document.getElementById("modelPreset"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens"), supportsVision: document.getElementById("supportsVision")
+  apiKey: document.getElementById("apiKey"), tokenBudget: document.getElementById("tokenBudget"), modelPreset: document.getElementById("modelPreset"), model: document.getElementById("model"), maxOutputTokens: document.getElementById("maxOutputTokens"), inputBudgetChars: document.getElementById("inputBudgetChars"), supportsVision: document.getElementById("supportsVision")
 };
 const statusText = document.getElementById("statusText");
 const testButton = document.getElementById("testButton");
@@ -56,8 +57,17 @@ const exportBackupButton = document.getElementById("exportBackupButton");
 const backupStatus = document.getElementById("backupStatus");
 
 const BACKUP_FORMAT = "sidemind-local-backup";
-const BACKUP_VERSION = 1;
-const BACKUP_STORAGE_KEYS = ["settings", "prompts", "promptLibraryVersion", "spaces", "conversations", "uiPreferences", "localArtifacts", "tokenUsageLedger", "providerBalances"];
+const BACKUP_VERSION = 2;
+const BACKUP_STORAGE_KEYS = ["settings", "prompts", "promptLibraryVersion", "spaces", "conversations", "uiPreferences", "localArtifacts", "tokenUsageLedger", "providerBalances", "savedSnippets", "historyStorageVersion"];
+
+document.getElementById("undoBackupRestoreButton").addEventListener("click", async () => {
+  if (!window.confirm("恢复到上一次 JSON 导入之前的数据？导入之后的新改动会被覆盖，请先导出备份。")) return;
+  try {
+    await SideMindWorkflow.undoRestore(chrome.storage.local, BACKUP_STORAGE_KEYS);
+    setBackupStatus("已恢复导入前数据，即将刷新。", "success");
+    setTimeout(() => location.reload(), 700);
+  } catch (error) { setBackupStatus(error.message, "error"); }
+});
 
 init();
 
@@ -136,7 +146,7 @@ function isKnownTextOnlyProfile(profile) {
 }
 
 function profileFromValues(id, name, values) {
-  const profile = { id, name, provider: values.provider, apiMode: values.apiMode, baseUrl: values.baseUrl, apiKey: values.apiKey, tokenBudget: Math.max(0, Number(values.tokenBudget) || 0), model: values.model, maxOutputTokens: Number(values.maxOutputTokens) || DEFAULTS.maxOutputTokens, supportsVision: Boolean(values.supportsVision) };
+  const profile = { id, name, provider: values.provider, apiMode: values.apiMode, baseUrl: values.baseUrl, apiKey: values.apiKey, tokenBudget: Math.max(0, Number(values.tokenBudget) || 0), model: values.model, maxOutputTokens: Number(values.maxOutputTokens) || DEFAULTS.maxOutputTokens, inputBudgetChars: SideMindWorkflow.inputBudget(values), supportsVision: Boolean(values.supportsVision) };
   return normalizeProfileProvider(profile);
 }
 
@@ -162,6 +172,7 @@ function loadProfile(profileId) {
   for (const key of ["profileName","provider","apiMode","baseUrl","apiKey","tokenBudget","maxOutputTokens"]) {
     fields[key].value = key === "profileName" ? profile.name : profile[key];
   }
+  fields.inputBudgetChars.value = SideMindWorkflow.inputBudget(profile);
   fields.supportsVision.checked = Boolean(profile.supportsVision);
   fields.model.value = profile.model || "";
   renderModelChoices(profile.model);
@@ -180,7 +191,7 @@ testButton.addEventListener("click", async () => {
   setBusy(true); setStatus("正在连接模型服务…");
   try {
     await saveSettings();
-    const response = await chrome.runtime.sendMessage({ type: "AI_REQUEST", payload: { instructions: "你是连接测试助手。严格按用户要求输出。", prompt: "只回复四个字：连接成功", imageDataUrls: [], reasoningEffort: "none" } });
+    const response = await chrome.runtime.sendMessage({ type: "AI_REQUEST", payload: { connectionTest: true, instructions: "你是连接测试助手。严格按用户要求输出。", prompt: "只回复四个字：连接成功", imageDataUrls: [], reasoningEffort: "none" } });
     if (!response?.ok) throw new Error(response?.error || "连接失败");
     setStatus(`连接正常：${response.result.text.trim()}`, "success");
   } catch (error) { setStatus(error.message, "error"); } finally { setBusy(false); }
@@ -218,7 +229,7 @@ async function deleteProfile() {
 function updateModeSections() {
   const webMode = fields.connectionMode.value === "chatgpt_web";
   for (const node of document.querySelectorAll(".api-only")) node.hidden = webMode;
-  for (const field of [fields.profileSelect,fields.profileName,fields.provider,fields.apiMode,fields.baseUrl,fields.apiKey,fields.tokenBudget,fields.modelPreset,fields.model,fields.maxOutputTokens]) field.disabled = webMode;
+  for (const field of [fields.profileSelect,fields.profileName,fields.provider,fields.apiMode,fields.baseUrl,fields.apiKey,fields.tokenBudget,fields.modelPreset,fields.model,fields.maxOutputTokens,fields.inputBudgetChars]) field.disabled = webMode;
   resetTokenUsageButton.disabled = webMode;
   fields.profileName.required = !webMode; fields.baseUrl.required = !webMode; fields.model.required = !webMode; fields.maxOutputTokens.required = !webMode;
   document.querySelector(".settings-card:not(.api-only)")?.classList.toggle("is-web-mode", webMode);
@@ -308,7 +319,7 @@ async function saveSettings() {
 function snapshotCurrentProfile({ provider = state.currentProvider } = {}) {
   if (!state.activeProfileId || !fields.profileName.value) return;
   const sharedConnection = { provider, apiMode:fields.apiMode.value, baseUrl:fields.baseUrl.value.trim().replace(/\/+$/, ""), apiKey:fields.apiKey.value.trim(), tokenBudget:Math.max(0, Number(fields.tokenBudget.value) || 0) };
-  const nextProfile = profileFromValues(state.activeProfileId, fields.profileName.value.trim(), { ...sharedConnection, model:fields.model.value.trim(), maxOutputTokens:Number(fields.maxOutputTokens.value) || DEFAULTS.maxOutputTokens, supportsVision:fields.supportsVision.checked });
+  const nextProfile = profileFromValues(state.activeProfileId, fields.profileName.value.trim(), { ...sharedConnection, model:fields.model.value.trim(), maxOutputTokens:Number(fields.maxOutputTokens.value) || DEFAULTS.maxOutputTokens, inputBudgetChars:Number(fields.inputBudgetChars.value), supportsVision:fields.supportsVision.checked });
   state.profiles = state.profiles.map((profile) => profile.provider === provider ? { ...profile, ...sharedConnection } : profile);
   const index = state.profiles.findIndex((item) => item.id === state.activeProfileId);
   if (index >= 0) state.profiles[index] = nextProfile; else state.profiles.push(nextProfile);
@@ -364,17 +375,15 @@ async function importLocalBackup(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
-  if (file.size > 20 * 1024 * 1024) return setBackupStatus("备份文件不能超过 20MB", "error");
+  if (file.size > 200 * 1024 * 1024) return setBackupStatus("备份文件不能超过 200MB", "error");
   try {
     const payload = JSON.parse(await file.text());
-    if (payload?.format !== BACKUP_FORMAT || !payload.data || typeof payload.data !== "object") {
-      throw new Error("这不是有效的 SideMind 本地备份文件");
-    }
+    SideMindWorkflow.validateBackup(payload);
     if (!window.confirm("恢复备份会覆盖当前模型配置、提示词、聊天历史和运行偏好。确定继续吗？")) return;
     const current = await chrome.storage.local.get("settings");
     const data = Object.fromEntries(BACKUP_STORAGE_KEYS.filter((key) => key in payload.data).map((key) => [key, payload.data[key]]));
     if (!payload.includesApiKeys && data.settings) data.settings = preserveCurrentApiKeys(data.settings, current.settings || {});
-    await chrome.storage.local.set({ ...data, backupReminderPending: false });
+    await SideMindWorkflow.restore(chrome.storage.local, data, BACKUP_STORAGE_KEYS);
     backupInstallNotice.hidden = true;
     setBackupStatus(`备份已恢复（导出版本 ${payload.extensionVersion || "未知"}），正在刷新设置…`, "success");
     setTimeout(() => location.reload(), 700);

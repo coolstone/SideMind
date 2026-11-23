@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8");
+const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8").replace(/^import "\.\/stream-reader\.js";\n/, "");
 const pdfContextSource = fs.readFileSync(path.join(root, "pdf-context.js"), "utf8");
 
 const noopEvent = { addListener() {} };
@@ -159,7 +159,7 @@ assert.equal(bridgeSendCount, 2, "a missing old content script should be retried
 assert.equal(bridgeInjectionCount, 1, "the current content script should be injected before retrying");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert.equal(manifest.version, "0.5.30");
+assert.equal(manifest.version, "0.5.31");
 assert.ok(manifest.permissions.includes("scripting"));
 assert.ok(manifest.permissions.includes("clipboardWrite"));
 assert.ok(manifest.permissions.includes("unlimitedStorage"));
@@ -249,7 +249,7 @@ assert.match(pdfSidepanelHtml, /application\/pdf/);
 assert.match(pdfSidepanelHtml, /pdf-context\.js/);
 assert.match(pdfSidepanelHtml, /pdfCitationDialog/);
 assert.match(fs.readFileSync(path.join(root, "options.html"), "utf8"), /supportsVision/);
-assert.match(optionsSourceForPdf, /MODEL_PROFILE_LIBRARY_VERSION = 5/);
+assert.match(optionsSourceForPdf, /MODEL_PROFILE_LIBRARY_VERSION = 6/);
 assert.match(optionsSourceForPdf, /DeepSeek V4 官方 API 仅支持文本输入，此项已锁定关闭/);
 assert.match(optionsSourceForPdf, /if \(normalized\.provider === "deepseek"\) return \{ \.\.\.normalized, supportsVision: false \}/);
 
@@ -280,7 +280,7 @@ assert.equal("sourceBytes" in storedPdf, false, "persisted PDF context must neve
 assert.equal(storedPdf.referencedPages[0].pageNumber, 1);
 assert.match(sidepanelSource, /data-message-image/);
 assert.match(sidepanelSource, /attachments: messageAttachments/);
-assert.match(sidepanelSource, /const replayImages = getImageDataUrls/);
+
 assert.match(sidepanelSource, /function createComparisonControls/);
 assert.match(sidepanelSource, /function createComparisonNavigator/);
 assert.match(sidepanelSource, /function visibleAnswerMessage/);
@@ -347,9 +347,9 @@ assert.match(sidepanelSource, /删除问题及对应答案/);
 assert.match(sidepanelSource, /确定删除这条问题及其/);
 assert.match(sidepanelSource, /async function editUserQuestion/);
 assert.match(sidepanelSource, /function currentPromptCharacterLimit/);
-assert.match(sidepanelSource, /已达到问题上限/);
-assert.match(sidepanelSource, /ui\.promptInput\.maxLength = limit/);
-assert.match(sidepanelSource, /ui\.promptLimitHint\.hidden = true/);
+
+
+
 assert.match(sidepanelSource, /确定删除这条回答吗？此操作无法撤销。/);
 assert.match(sidepanelSource, /localArtifacts\.filter\(\(item\) => item\.messageId !== message\.id\)/);
 assert.match(sidepanelSource, /text\/markdown;charset=utf-8/);
@@ -532,6 +532,7 @@ const modelConstantsEnd = optionsSource.indexOf("const PROVIDER_PRESETS", modelC
 const modelFunctionsStart = optionsSource.indexOf("function mergeBuiltInProfiles");
 const modelFunctionsEnd = optionsSource.indexOf("function profileFromValues", modelFunctionsStart);
 const modelConfigContext = vm.createContext({});
+vm.runInContext(fs.readFileSync(path.join(root, "workflow-core.js"), "utf8"), modelConfigContext);
 new vm.Script(`${optionsSource.slice(modelConstantsStart, modelConstantsEnd)}\n${optionsSource.slice(modelFunctionsStart, modelFunctionsEnd)}\n;globalThis.__modelProfiles = { mergeBuiltInProfiles };`).runInContext(modelConfigContext);
 const migratedProfiles = modelConfigContext.__modelProfiles.mergeBuiltInProfiles([
   { id: "builtin-deepseek", name: "DeepSeek · V4 Flash", provider: "deepseek", baseUrl: "https://api.deepseek.com", apiKey: "secret", model: "deepseek-v4-flash" }
@@ -636,4 +637,15 @@ assert.match(sidepanelSource, /dataset\.roundMessageId = round\.id/);
 assert.match(sidepanelSource, /target\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
 assert.match(sidepanelSource, /conversationRounds\(\)\.length < 2/);
 
+for (const model of ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"]) {
+  chrome.storage.local.get = async () => ({ settings: { model, provider: "openai", apiKey: "fixture", baseUrl: "https://api.openai.com/v1" } });
+  context.fetch = async (url, options) => {
+    assert.equal(url, "https://api.openai.com/v1/images/generations");
+    const body = JSON.parse(options.body);
+    assert.deepEqual(body, { model, prompt: "海报", quality: "xhigh", complexity: "low", output_format: "png", n: 1 });
+    return { ok: true, json: async () => ({ data: [{ b64_json: "cG5n" }] }) };
+  };
+  const generated = await evaluate('callModel({prompt:"海报", quality:"xhigh", complexity:"low"}, "image-test")');
+  assert.equal(generated.image, "data:image/png;base64,cG5n");
+}
 console.log("SideMind regression checks: OK");

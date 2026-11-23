@@ -72,20 +72,23 @@
   }
 
   function buildDocumentMap(pages, budget = MAX_DOCUMENT_MAP_CHARS) {
+    pages = pages || [];
     const normalizedBudget = Math.max(1200, Math.min(MAX_DOCUMENT_MAP_CHARS, Number(budget) || MAX_DOCUMENT_MAP_CHARS));
-    let remaining = normalizedBudget;
-    const entries = [];
-    for (const page of pages || []) {
-      if (remaining <= 0) break;
-      const header = `[p. ${page.pageNumber}] ${page.titleHint || titleHint(page.text, page.pageNumber)}\n`;
-      const maxExcerpt = Math.max(0, Math.min(320, remaining - header.length));
-      const excerpt = String(page.text || "").replace(/\s+/g, " ").slice(0, maxExcerpt);
-      const text = `${header}${excerpt}${excerpt.length < String(page.text || "").replace(/\s+/g, " ").length ? "…" : ""}`.trim();
-      if (!text) continue;
-      entries.push({ pageNumber: page.pageNumber, titleHint: page.titleHint || titleHint(page.text, page.pageNumber), excerpt: excerpt.slice(0, 320) });
-      remaining -= text.length + 2;
-    }
-    return { entries, text: entries.map((entry) => `[p. ${entry.pageNumber}] ${entry.titleHint}\n${entry.excerpt}`).join("\n\n"), truncated: entries.length < (pages || []).length };
+    const headers = pages.map((page) => `[p. ${page.pageNumber}]`);
+    const baseSize = headers.join("\n\n").length;
+    if (baseSize > normalizedBudget) throw new Error("概览预算不足以覆盖全部页码，请提高预算。");
+    let remaining = normalizedBudget - baseSize;
+    const entries = pages.map((page, index) => {
+      const allowance = Math.floor(remaining / (pages.length - index));
+      const text = String(page.text || "").replace(/\s+/g, " ").trim();
+      const title = String(page.titleHint || titleHint(page.text, page.pageNumber)).slice(0, Math.min(35, Math.floor(allowance / 3)));
+      const excerpt = text.slice(0, Math.max(0, Math.min(320, allowance - title.length - 2)));
+      const extra = (title ? " " + title : "") + (excerpt ? "\n" + excerpt : "");
+      remaining -= extra.length;
+      return { pageNumber: page.pageNumber, titleHint: title, excerpt, truncated: excerpt.length < text.length };
+    });
+    const text = entries.map((entry, index) => headers[index] + (entry.titleHint ? " " + entry.titleHint : "") + (entry.excerpt ? "\n" + entry.excerpt : "")).join("\n\n");
+    return { entries, text, coveredPages: entries.length, totalPages: pages.length, truncated: entries.some((entry) => entry.truncated) };
   }
 
   function detectTextStatus(pages) {

@@ -127,6 +127,9 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0 0h5M3 8V3m9 4v5l3 2"/></svg>
               </button>
               <button class="reasoning-button" id="reasoningButton" type="button" data-tooltip="思考模式：切换模型的分析强度">◉ <span>思考关</span></button>
+              <select id="openAIEffort" hidden aria-label="推理强度" title="推理强度"><option value="">默认推理</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">特高</option><option value="max">最大</option></select>
+              <select id="imageQuality" hidden aria-label="渲染画质" title="渲染画质"><option value="auto">自动画质</option><option value="low">低画质</option><option value="medium">中画质</option><option value="high">高画质</option><option value="xhigh">特高画质</option><option value="max">最高画质</option></select>
+              <select id="imageComplexity" hidden aria-label="构图规划" title="构图规划"><option value="high">高规划</option><option value="medium">中规划</option><option value="low">低规划</option></select>
               <button class="composer-icon-button" id="readPageButton" type="button" data-tooltip="阅读此页：刷新网页正文并加入下一条消息" aria-label="阅读此页">
                 <svg viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H11v17H7.5A3.5 3.5 0 0 0 4 22V5.5ZM20 5.5A3.5 3.5 0 0 0 16.5 2H13v17h3.5A3.5 3.5 0 0 1 20 22V5.5Z"/></svg>
               </button>
@@ -173,6 +176,7 @@
         <div class="history-footer">
           <button class="history-action-button import-history-button" id="importHistoryButton" type="button">导入记录</button>
           <button class="history-action-button export-history-button" id="exportHistoryButton" type="button">导出当前空间</button>
+          <button class="history-action-button export-history-button" id="exportHistoryZip" type="button">导出 ZIP（含附件）</button>
           <button class="history-action-button clear-history-button" id="clearHistoryButton" type="button">清空历史</button>
         </div>
       </aside>
@@ -298,7 +302,12 @@
     <script src="template-variables.js"></script>
     <script src="prompt-library.js"></script>
     <script src="history-transfer.js"></script>
+    <script src="vendor/jszip/jszip.min.js"></script>
+    <script src="history-archive.js"></script>
     <script src="pdf-context.js"></script>
+    <script src="workflow-core.js"></script>
+    <script src="model-client.js"></script>
+    <script src="snippets.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

@@ -1,3 +1,4 @@
+import "./stream-reader.js";
 const DEFAULT_SETTINGS = {
   connectionMode: "api",
   provider: "openai",
@@ -410,16 +411,42 @@ async function callModel(payload, requestedId, requestedProfileId) {
     const endpoint = buildEndpoint(settings.baseUrl, mode, provider);
     const headers = { "Content-Type": "application/json" };
     if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
+    if (provider === "openai" && /^gpt-image-2\.6-(sunburst|flare)$/.test(settings.model)) {
+      const base = endpoint.replace(/\/(responses|chat\/completions)$/, "");
+      if (payload.imageDataUrls?.length) throw new Error("当前生图入口支持文字描述，请移除参考图后发送。");
+      const url = payload.connectionTest ? base + "/models/" + settings.model : base + "/images/generations";
+      const options = { headers, signal: controller.signal };
+      if (!payload.connectionTest) {
+        options.method = "POST";
+        options.body = JSON.stringify({ model: settings.model, prompt: payload.prompt, quality: payload.quality || "auto", complexity: payload.complexity || "high", output_format: "png", n: 1 });
+      }
+      const result = await fetch(url, options);
+      const data = await result.json().catch(() => ({}));
+      if (!result.ok) throw new Error(`HTTP ${result.status} · ${data.error?.message || "图片接口请求失败"}`);
+      if (payload.connectionTest) return { text: "可访问此模型" };
+      if (!data.data?.[0]?.b64_json) throw new Error("图片服务未返回 PNG 图片");
+      return { text: "已生成图片", image: "data:image/png;base64," + data.data[0].b64_json, usage: data.usage };
+    }
     const body = mode === "responses"
       ? buildResponsesBody(settings, payload)
       : buildChatBody(settings, payload);
 
+    if (payload.stream) {
+      body.stream = true;
+      if (mode === "chat" && provider === "openai") body.stream_options = { include_usage: true };
+    }
     response = await fetch(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: controller.signal
     });
+    if (payload.stream && response.ok && response.headers.get("content-type")?.includes("text/event-stream")) {
+      return await SideMindStream.read(response.body, mode, async (delta) => {
+        if (requestState.userCancelled) return;
+        await chrome.runtime.sendMessage({ type: "AI_PROGRESS", requestId, delta }).catch(() => {});
+      });
+    }
     rawText = await response.text();
   } catch (error) {
     if (requestState.userCancelled && error?.code !== "USER_CANCELLED") {
@@ -451,7 +478,7 @@ async function callModel(payload, requestedId, requestedProfileId) {
   }
 
   if (!response.ok) {
-    throw new Error(data?.error?.message || data?.message || `请求失败（HTTP ${response.status}）`);
+    throw new Error(`HTTP ${response.status} · ${data?.error?.message || data?.message || "模型服务拒绝了请求"}`);
   }
 
   const text = mode === "responses" ? extractResponseText(data) : extractChatText(data);

@@ -151,10 +151,14 @@
             </label>
             <label>
               <span>最大输出 Token</span>
-              <input id="maxOutputTokens" name="maxOutputTokens" type="number" min="256" max="128000" step="1" value="1800" required />
+              <input id="maxOutputTokens" name="maxOutputTokens" type="number" min="256" step="1" value="1800" required />
               <small id="tokenHint">上限取决于所选模型；日常网页总结建议使用 4,000—16,000。</small>
             </label>
           </div>
+          <label><span>输入材料预算（字符估算）</span>
+            <input id="inputBudgetChars" type="number" min="1000" max="500000" step="1" value="48000" />
+            <small>包含问题、历史、网页和 PDF 文字。独立于最大输出 Token；字符数不是精确 Token 数，图片消耗由模型决定。</small>
+          </label>
           <label class="backup-secret-option model-vision-option">
             <input id="supportsVision" name="supportsVision" type="checkbox" />
             <span><strong>此模型支持图片 / 视觉输入</strong><small id="supportsVisionHint">用于截图、粘贴图片和扫描 PDF 页面。仅在服务商与模型实际支持视觉输入时开启。</small></span>
@@ -186,6 +190,7 @@
           <div class="backup-actions">
             <button id="importBackupButton" type="button">恢复本地备份</button>
             <button id="exportBackupButton" type="button">导出本地备份</button>
+            <button id="undoBackupRestoreButton" type="button">撤销最近恢复</button>
           </div>
           <p class="backup-status" id="backupStatus" aria-live="polite"></p>
         </section>
@@ -202,6 +207,7 @@
         </div>
       </form>
     </main>
+    <script src="workflow-core.js"></script>
     <script src="options.js"></script>
   </body>
 </html>
